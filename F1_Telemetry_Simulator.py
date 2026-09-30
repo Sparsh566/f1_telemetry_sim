@@ -135,6 +135,16 @@ DEFAULT_TRACK_KEY = "🇮🇹 Monza (Autodromo Nazionale Monza)"
 # -----------------------------------------------------------------------------
 NUM_CARS = 8
 CAR_NAMES = ["VER", "HAM", "LEC", "NOR", "RUS", "ALO", "SAI", "PER"][:NUM_CARS]
+DRIVER_LABELS = {
+    "VER": "VER (Verstappen)",
+    "HAM": "HAM (Hamilton)",
+    "LEC": "LEC (Leclerc)",
+    "NOR": "NOR (Norris)",
+    "RUS": "RUS (Russell)",
+    "ALO": "ALO (Alonso)",
+    "SAI": "SAI (Sainz)",
+    "PER": "PER (Perez)"
+}
 TYRE_COMPOUNDS = ["Soft", "Medium", "Hard", "Inter", "Wet"]
 
 # Simulation tuning
@@ -394,6 +404,47 @@ def simulate_step(state: Dict[str, Dict[str, Any]], dt: float = 1.0, safety_car_
     return state
 
 
+def fast_forward_race_to_finish(state: Dict[str, Dict[str, Any]], track_info: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """
+    Instantly fast-forwards remaining race laps to produce the final classification,
+    podium standings, and 100% completed telemetry state for all cars.
+    """
+    total_laps = track_info.get("total_laps", 53)
+    track_len = track_info.get("length_m", 5793.0)
+    base_lap = track_info.get("base_lap", 80.0)
+
+    for name, car in state.items():
+        curr_lap = car.get("lap", 1)
+        remaining = max(0, total_laps - curr_lap)
+        aggr = car.get("aggression", 1.0)
+
+        # Simulate final lap times and fastest lap
+        for _ in range(curr_lap, total_laps + 1):
+            sim_lap = round(base_lap * (random.uniform(0.97, 1.02) / (aggr ** 0.3)), 3)
+            if car.get("best_lap_time") is None or sim_lap < car["best_lap_time"]:
+                car["best_lap_time"] = sim_lap
+            car["last_lap_time"] = sim_lap
+
+        car["lap"] = total_laps
+        car["lap_distance"] = track_len
+        car["total_distance"] = (track_len * total_laps) + (aggr * 150.0) + random.uniform(0.0, 100.0)
+        car["finished"] = True
+        car["sector"] = 3
+        car["fuel"] = max(2.0, round(car.get("fuel", 50.0) - remaining * 1.5, 1))
+        car["tyre_wear"] = min(0.92, round(car.get("tyre_wear", 0.15) + remaining * 0.014, 3))
+        car["speed"] = round(random.uniform(270.0, track_info.get("max_speed", 335.0)), 1)
+        car["in_pit"] = False
+        car["pit_request"] = False
+
+    # Rank final classification by total distance
+    ranked = sorted(state.items(), key=lambda kv: kv[1]["total_distance"], reverse=True)
+    for pos, (cname, c) in enumerate(ranked, 1):
+        c["position"] = pos
+
+    return state
+
+
+
 def export_csv_bytes(state_arg: Dict[str, Dict[str, Any]], track_name: str = "Monza") -> bytes:
     output = io.StringIO()
     writer = csv.writer(output)
@@ -643,7 +694,7 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------------
     # Controls
     # -------------------------------------------------------------------------
-    col1, col2, col3, col4, col5 = st.columns([1, 1, 1.2, 1, 1.2])
+    col1, col2, col3, col4, col5 = st.columns([1.1, 1.3, 1.2, 1.0, 1.2])
     with col1:
         if st.button("Start Simulation", use_container_width=True):
             st.session_state.running = True
@@ -654,10 +705,16 @@ if __name__ == "__main__":
             st.rerun()
 
     with col2:
+        if st.button("🏁 Direct End Result", type="primary", use_container_width=True):
+            st.session_state.sim_state = fast_forward_race_to_finish(st.session_state.sim_state, current_track_info)
+            st.session_state.running = False
+            st.session_state.race_finished_banner = True
+            st.rerun()
         if st.button("Reset Race", use_container_width=True):
             st.session_state.sim_state = make_initial_state(current_track_info)
             st.session_state.running = False
             st.session_state.safety_car = False
+            st.session_state.race_finished_banner = False
             st.session_state.last_update = time.time()
             for cname, c in st.session_state.sim_state.items():
                 st.session_state[f"aggr_{cname}"] = c["aggression"]
@@ -729,15 +786,60 @@ if __name__ == "__main__":
     # Leaderboard & Metrics
     # -------------------------------------------------------------------------
     track_len = current_track_info["length_m"]
+    total_laps = current_track_info["total_laps"]
+    total_race_dist = track_len * total_laps
+
+    # Check if all cars have completed the scheduled laps
+    all_finished = all(car.get("finished", False) for car in state.values())
+    if all_finished:
+        st.session_state.running = False
+
+    # Grand Prix Completion Progress Bar (Leader pace)
+    leader_car = min(state.values(), key=lambda c: c["position"]) if state else None
+    if leader_car:
+        l_lap = total_laps if (all_finished or leader_car.get("finished")) else min(total_laps, leader_car.get("lap", 1))
+        l_pct = 100 if (all_finished or leader_car.get("finished")) else int(min(100.0, max(0.0, (leader_car.get("total_distance", 0.0) / total_race_dist) * 100.0)))
+        st.progress(
+            l_pct / 100.0,
+            text=f"🏁 Grand Prix Race Progress: Lap {l_lap}/{total_laps} ({l_pct}% Completed)"
+        )
+
+    # Podium Celebration Card when finished or directly requested
+    if all_finished or st.session_state.get("race_finished_banner"):
+        sorted_final = sorted(state.items(), key=lambda kv: kv[1]["position"])
+        w_name, w_car = sorted_final[0]
+        st.success(f"### 🏆 GRAND PRIX COMPLETE! WINNER: {DRIVER_LABELS.get(w_name, w_name)} 🥇")
+        pod1, pod2, pod3 = st.columns(3)
+        with pod1:
+            st.info(f"🥇 **P1 WINNER**: {DRIVER_LABELS.get(w_name, w_name)}\n\n* Best Lap: `{w_car.get('best_lap_time', 'N/A')}s`\n* Final Tyre: `{w_car['tyre']}` ({round(w_car['tyre_wear']*100, 1)}% wear)\n* Status: `Finished (Chequered Flag)`")
+        if len(sorted_final) > 1:
+            p2_n, p2_c = sorted_final[1]
+            with pod2:
+                st.info(f"🥈 **P2 RUNNER-UP**: {DRIVER_LABELS.get(p2_n, p2_n)}\n\n* Best Lap: `{p2_c.get('best_lap_time', 'N/A')}s`\n* Final Tyre: `{p2_c['tyre']}` ({round(p2_c['tyre_wear']*100, 1)}% wear)\n* Status: `Finished`")
+        if len(sorted_final) > 2:
+            p3_n, p3_c = sorted_final[2]
+            with pod3:
+                st.info(f"🥉 **P3 PODIUM**: {DRIVER_LABELS.get(p3_n, p3_n)}\n\n* Best Lap: `{p3_c.get('best_lap_time', 'N/A')}s`\n* Final Tyre: `{p3_c['tyre']}` ({round(p3_c['tyre_wear']*100, 1)}% wear)\n* Status: `Finished`")
+
     rows = []
     for name, car in sorted(state.items(), key=lambda kv: kv[1]["position"]):
-        pit_status = "🏁 FIN" if car.get("finished") else ("IN PIT" if car.get("in_pit") else ("PIT REQ" if car.get("pit_request") else "TRACK"))
-        progress_pct = int(min(1.0, max(0.0, car.get("lap_distance", 0.0) / track_len)) * 100)
+        is_fin = car.get("finished", False) or (car.get("lap", 1) >= total_laps and car.get("lap_distance", 0.0) >= track_len)
+        pit_status = "🏁 FIN" if is_fin else ("IN PIT" if car.get("in_pit") else ("PIT REQ" if car.get("pit_request") else "TRACK"))
+
+        # Lap Progress: Locked to 100% when finished, else percentage of the active lap
+        if is_fin or car.get("lap", 1) > total_laps:
+            lap_progress_pct = 100
+            race_progress_pct = 100
+        else:
+            lap_progress_pct = int(min(100.0, max(0.0, (car.get("lap_distance", 0.0) / track_len) * 100.0)))
+            race_progress_pct = int(min(100.0, max(0.0, (car.get("total_distance", 0.0) / total_race_dist) * 100.0)))
+
         rows.append({
             "Position": f"P{car['position']}",
             "Driver": name,
-            "Lap": f"{car['lap']}/{current_track_info['total_laps']}",
-            "Progress": progress_pct,
+            "Lap": f"{min(total_laps, car['lap'])}/{total_laps}",
+            "Progress": lap_progress_pct,
+            "Race Progress": race_progress_pct,
             "Sector": f"S{car.get('sector', 1)}",
             "Speed (km/h)": round(car["speed"], 1),
             "Lap Time (s)": round(car["lap_time"], 3),
@@ -761,7 +863,8 @@ if __name__ == "__main__":
         | **🏆 Pos** | **Race Position** | Current standing (`P1` to `P8`) based on total race distance covered. |
         | **🏎️ Driver** | **F1 Driver** | Driver code (`VER` = Verstappen, `HAM` = Hamilton, `LEC` = Leclerc, etc.). |
         | **🔄 Lap** | **Lap Count** | Current completed lap out of total scheduled Grand Prix laps (e.g. `3/53`). |
-        | **📍 Lap Progress** | **Circuit Completion %** | How far the car has traveled through the current lap (`0%` = start line, `100%` = finish line). |
+        | **📍 Lap Progress** | **Lap Completion %** | How far the car has traveled through the current lap (`0%` = start line, `100%` = finish line). |
+        | **🏁 Race Progress** | **Grand Prix Completion %** | Total race distance completed out of the entire scheduled Grand Prix. |
         | **⏱️ Sector** | **Track Timing Sector** | The track is split into 3 sectors: `S1` (opening turns), `S2` (middle technical), `S3` (final straight/corners). |
         | **⚡ Speed (km/h)** | **Car Velocity** | Current real-time speed in kilometers per hour. |
         | **⏱️ Lap Time (s)** | **Current Lap Pace** | Estimated pace for the ongoing lap in seconds. |
@@ -785,6 +888,7 @@ if __name__ == "__main__":
             "Driver": st.column_config.TextColumn("🏎️ Driver", help="F1 Driver code (VER, HAM, LEC, NOR, RUS, ALO, SAI, PER)"),
             "Lap": st.column_config.TextColumn("🔄 Lap", help="Current Lap / Total Grand Prix Laps"),
             "Progress": st.column_config.ProgressColumn("📍 Lap Progress", help="Track completion percentage for current lap (0% start to 100% finish line)", min_value=0, max_value=100, format="%d%%"),
+            "Race Progress": st.column_config.ProgressColumn("🏁 Race Progress", help="Overall Grand Prix completion percentage", min_value=0, max_value=100, format="%d%%"),
             "Sector": st.column_config.TextColumn("⏱️ Sector", help="Current circuit timing sector: S1, S2, or S3"),
             "Speed (km/h)": st.column_config.NumberColumn("⚡ Speed (km/h)", help="Instantaneous car velocity in km/h", format="%.1f"),
             "Lap Time (s)": st.column_config.NumberColumn("⏱️ Lap Time (s)", help="Pace estimation for current lap in seconds", format="%.3f"),
@@ -836,7 +940,12 @@ if __name__ == "__main__":
     df_brake = pd.DataFrame(brake_dict, index=ticks_index)
     df_brake.index.name = "⏱️ Time Sample"
 
-    tab_graphs, tab_tables = st.tabs(["📈 Graphical Charts View", "📋 Telemetry Data Tables View"])
+    tab_graphs, tab_tables, tab_dim_red, tab_ensemble = st.tabs([
+        "📈 Graphical Charts View",
+        "📋 Telemetry Data Tables View",
+        "📉 Dimensionality Reduction (PCA & t-SNE)",
+        "🌳 Ensemble Methods & Diagnostics"
+    ])
 
     with tab_graphs:
         st.caption("💡 *Hover over charts to see exact figures. Click top-right of any chart to view as table.*")
@@ -947,6 +1056,500 @@ if __name__ == "__main__":
                 "Aggression": st.column_config.TextColumn("🔥 Driving Aggression", help="Current aggression multiplier")
             }
         )
+
+    with tab_dim_red:
+        st.caption("🧭 *High-Dimensional Telemetry Compression & Manifold Learning: Uncovering driver habits, tyre regimes, and vehicle dynamics using PCA and t-SNE.*")
+
+        if not check_ml_available():
+            st.warning("Dimensionality reduction features require `pandas`, `numpy`, and `scikit-learn`. Please ensure they are installed in your Python environment.")
+        else:
+            import importlib
+            import f1_dimensionality_reduction
+            importlib.reload(f1_dimensionality_reduction)
+            from f1_dimensionality_reduction import (
+                extract_telemetry_samples,
+                compute_pca,
+                compute_tsne,
+                FEATURE_COLUMNS,
+                FEATURE_DISPLAY_NAMES
+            )
+
+            df_dim_samples = extract_telemetry_samples(state, include_history=True)
+
+            sub_pca, sub_tsne, sub_compare, sub_guide = st.tabs([
+                "📊 Principal Component Analysis (PCA)",
+                "🌀 t-SNE Manifold & Clusters",
+                "⚖️ Side-by-Side Face-Off",
+                "📖 Beginner & Intuition Guide"
+            ])
+
+            pca_res = compute_pca(df_dim_samples, n_components=4)
+
+            # --- SUB-TAB 1: PCA ---
+            with sub_pca:
+                if pca_res is not None:
+                    # 4 Top KPI Cards
+                    k1, k2, k3, k4 = st.columns(4)
+                    var_pc1 = pca_res.explained_variance_ratio[0] * 100.0
+                    var_pc2 = pca_res.explained_variance_ratio[1] * 100.0
+                    k1.metric("🎯 PC1 Variance", f"{var_pc1:.1f}%", help="Variance explained by Principal Component 1")
+                    k2.metric("🎯 PC2 Variance", f"{var_pc2:.1f}%", help="Variance explained by Principal Component 2")
+                    k3.metric("📈 2D Information Preserved", f"{(var_pc1 + var_pc2):.1f}%", help="Total telemetry information retained in just 2 axes")
+                    k4.metric("🗜️ Dimension Compression", f"{len(FEATURE_COLUMNS)} Sensors ➔ 2 PCs", help="Multi-sensor reduction into 2 orthogonal axes")
+
+                    st.info(f"💡 **Information Barometer**: {pca_res.get_variance_summary_text()}")
+
+                    col_p1, col_p2 = st.columns([1.3, 1.0])
+
+                    with col_p1:
+                        st.subheader("🎯 2D PCA Telemetry Projection")
+                        pca_color_choice = st.selectbox(
+                            "🎨 Color Data Points By:",
+                            options=["🏎️ Driver", "🛞 Tyre Compound", "📍 Sample Type"],
+                            index=0,
+                            key="pca_color_selector"
+                        )
+                        color_field_map = {
+                            "🏎️ Driver": "driver",
+                            "🛞 Tyre Compound": "tyre_compound",
+                            "📍 Sample Type": "sample_type"
+                        }
+                        target_color = color_field_map[pca_color_choice]
+
+                        df_pca_plot = pca_res.transformed_df.copy()
+
+                        if hasattr(st, "scatter_chart"):
+                            st.scatter_chart(
+                                df_pca_plot,
+                                x="PC1",
+                                y="PC2",
+                                color=target_color,
+                                use_container_width=True
+                            )
+                        else:
+                            st.dataframe(df_pca_plot[["driver", "tyre_compound", "PC1", "PC2", "speed", "brake_temp", "tyre_wear"]])
+
+                        st.markdown(f"""
+                        **🔍 Axis Interpretations (Linear Orthogonal Loadings):**
+                        * **Horizontal Axis (PC1)**: `{pca_res.interpret_component(0)}`
+                        * **Vertical Axis (PC2)**: `{pca_res.interpret_component(1)}`
+                        """)
+
+                    with col_p2:
+                        st.subheader("📊 Scree Plot (Explained Variance)")
+                        scree_data = pd.DataFrame({
+                            "Principal Component": [f"PC{i+1}" for i in range(pca_res.n_components)],
+                            "Explained Variance (%)": pca_res.explained_variance_ratio * 100.0
+                        }).set_index("Principal Component")
+                        st.bar_chart(scree_data)
+
+                        with st.expander("🔬 Sensor Loading Matrix (Biplot Weights)", expanded=False):
+                            st.caption("Shows how strongly each original sensor impacts PC1 and PC2. Higher absolute numbers indicate dominant influence.")
+                            formatted_loadings = pca_res.loadings_df.copy()
+                            formatted_loadings.index = [FEATURE_DISPLAY_NAMES.get(idx, idx) for idx in formatted_loadings.index]
+                            st.dataframe(formatted_loadings.round(3), use_container_width=True)
+                else:
+                    st.info("Collecting sufficient telemetry ticks to compute PCA...")
+
+            # --- SUB-TAB 2: t-SNE ---
+            with sub_tsne:
+                st.subheader("🌀 Non-Linear Manifold Embedding (t-SNE)")
+                st.caption("t-SNE preserves local neighborhoods, mapping multi-sensor car behavior into natural driving style and tyre wear clusters.")
+
+                tsne_c1, tsne_c2, tsne_c3 = st.columns([1, 1, 1])
+                with tsne_c1:
+                    user_perp = st.slider("🔍 Perplexity (Effective Neighbors)", min_value=5, max_value=40, value=15, step=5, help="Controls balance between local details and global race clusters")
+                with tsne_c2:
+                    user_iter = st.slider("🔄 Optimization Steps", min_value=250, max_value=1000, value=500, step=50, help="Gradient descent iterations for embedding convergence")
+                with tsne_c3:
+                    tsne_color_choice = st.selectbox(
+                        "🎨 Color Clusters By:",
+                        options=["🏎️ Driver", "🛞 Tyre Compound"],
+                        index=0,
+                        key="tsne_color_selector"
+                    )
+
+                target_tsne_color = "driver" if "Driver" in tsne_color_choice else "tyre_compound"
+
+                col_btn, col_info = st.columns([1.2, 2.8])
+                with col_btn:
+                    run_tsne_btn = st.button("🌀 Run / Update t-SNE Manifold", type="primary", key="btn_compute_tsne")
+                with col_info:
+                    st.caption("💡 *t-SNE runs an iterative optimization. Click the button to re-cluster the latest telemetry snapshots.*")
+
+                if run_tsne_btn or "cached_tsne_res" not in st.session_state:
+                    tsne_res = compute_tsne(df_dim_samples, perplexity=float(user_perp), n_iter=int(user_iter))
+                    if tsne_res is not None:
+                        st.session_state["cached_tsne_res"] = tsne_res
+                else:
+                    tsne_res = st.session_state.get("cached_tsne_res")
+
+                if tsne_res is not None:
+                    col_t1, col_t2 = st.columns([1.4, 1.0])
+                    with col_t1:
+                        if hasattr(st, "scatter_chart"):
+                            st.scatter_chart(
+                                tsne_res.embedded_df,
+                                x="tSNE1",
+                                y="tSNE2",
+                                color=target_tsne_color,
+                                use_container_width=True
+                            )
+                        else:
+                            st.dataframe(tsne_res.embedded_df[["driver", "tyre_compound", "tSNE1", "tSNE2"]])
+
+                    with col_t2:
+                        st.markdown(f"""
+                        #### 🏝️ Key Discovered Manifolds:
+                        * **Driver Style Clustering**: Notice how high-aggression drivers (`VER`, `ALO`) form distinct local neighborhoods compared to smoother drivers.
+                        * **Tyre Friction Islands**: Soft compounds separate from Hard compounds due to distinct traction and braking profiles.
+                        * **KL Divergence**: `{tsne_res.kl_divergence:.3f}` *(Measures how accurately 2D probabilities match original high-D affinities)*.
+                        """)
+                        with st.expander("⚠️ Understanding The Crowding Problem", expanded=False):
+                            st.markdown("""
+                            In 8-dimensional sensor space, there is vast volume for data points to spread out. When forced into a flat 2D canvas, points tend to collapse on top of each other.
+
+                            **The Solution**: t-SNE uses a heavy-tailed **Student-t distribution** in 2D. This pushes moderately distant clusters further apart while keeping close neighbors tightly bound!
+                            """)
+                else:
+                    st.info("Collecting sufficient telemetry points to compute t-SNE embedding...")
+
+            # --- SUB-TAB 3: COMPARISON ---
+            with sub_compare:
+                st.subheader("⚖️ Side-by-Side: PCA vs. t-SNE Face-Off")
+                st.caption("Visual comparison of the exact same telemetry samples projected linearly (PCA) vs non-linearly (t-SNE).")
+
+                cmp_c1, cmp_c2 = st.columns(2)
+                with cmp_c1:
+                    st.markdown("#### 📏 PCA: Linear Global Structure")
+                    if pca_res is not None and hasattr(st, "scatter_chart"):
+                        st.scatter_chart(pca_res.transformed_df, x="PC1", y="PC2", color="driver", use_container_width=True)
+                    st.caption("Preserves largest variances. Distance between distant points is mathematically meaningful.")
+
+                with cmp_c2:
+                    st.markdown("#### 🏝️ t-SNE: Non-linear Local Clusters")
+                    if tsne_res is not None and hasattr(st, "scatter_chart"):
+                        st.scatter_chart(tsne_res.embedded_df, x="tSNE1", y="tSNE2", color="driver", use_container_width=True)
+                    st.caption("Preserves neighbor similarities. Discovers clusters that linear methods miss.")
+
+                st.markdown("---")
+                st.markdown(r"""
+                | Comparison Metric | 📏 Principal Component Analysis (PCA) | 🌀 t-SNE (Manifold Learning) |
+                | :--- | :--- | :--- |
+                | **Method Type** | Linear, orthogonal projection | Non-linear, probabilistic embedding |
+                | **What it Preserves** | Global variance (extreme values & spread) | Local neighborhoods (who is similar to whom) |
+                | **Axis Interpretability** | **High**: Exact sensor weights (loadings) for PC1 & PC2 | **None**: Coordinate axes have arbitrary units |
+                | **Speed / Computation** | **Instant** ($O(D^2 N)$ via matrix decomposition) | **Iterative** ($O(N \log N)$ via Barnes-Hut) |
+                | **Project New Cars?** | **Yes**: Instant multiplication $X_{new} \cdot W$ | **No**: Requires re-fitting the embedding |
+                | **Primary F1 Use Case** | Compressing 10+ sensors into master energy/thermal dials | Discovering driver styles, tyre degradation phases & anomalies |
+                """)
+
+            # --- SUB-TAB 4: BEGINNER GUIDE ---
+            with sub_guide:
+                st.subheader("📖 Beginner's Intuition Guide: Dimensionality Reduction")
+
+                with st.expander("💡 1. The Shadow Analogy (Understanding PCA)", expanded=True):
+                    st.markdown("""
+                    Imagine holding a 3D toy car in a dark room. If you shine a flashlight directly from the side, its 2D shadow on the wall clearly outlines the wheels, wing, and cockpit.
+
+                    If you shined the light from the front, the shadow would just look like a small rectangle—losing most details.
+
+                    **PCA is like finding the exact flashlight angle that casts the largest, most informative 2D shadow of your multi-dimensional telemetry data.**
+                    """)
+
+                with st.expander("🏝️ 2. The Cocktail Party Analogy (Understanding t-SNE)", expanded=False):
+                    st.markdown("""
+                    Imagine a large room with 100 people talking about Formula 1, aerodynamics, tyre chemistry, and engine tuning.
+
+                    **t-SNE is like arranging everyone at small cocktail tables**: people who talk about tyre wear sit together at Table A, while engine engineers sit at Table B.
+
+                    t-SNE makes sure that friends stay close together, without obsessing over the exact distance between Table A and Table B across the room.
+                    """)
+
+                with st.expander("🏎️ 3. Why Formula 1 Engineers Rely on Both", expanded=False):
+                    st.markdown("""
+                    * **Race Strategy**: PCA reduces dozens of engine, thermal, and tyre sensors into a single **"Degradation Index"** that can be tracked in real-time on the pit wall.
+                    * **Driver Coaching**: t-SNE clusters corner-entry speeds, braking points, and throttle aggression to show drivers how their technique differs from their teammate.
+                    """)
+
+            # Telemetry Export Button
+            if pca_res is not None and tsne_res is not None:
+                st.write("---")
+                df_export_dim = pca_res.transformed_df.copy()
+                df_export_dim["tSNE1"] = tsne_res.embedded_df["tSNE1"]
+                df_export_dim["tSNE2"] = tsne_res.embedded_df["tSNE2"]
+                csv_dim_bytes = df_export_dim.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    "📥 Download Dimensionality Reduction Dataset (CSV)",
+                    csv_dim_bytes,
+                    file_name=f"f1_dim_reduction_{current_track_info['name'].lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    help="Exports raw telemetry sensors alongside PC1, PC2, tSNE1, and tSNE2 coordinates"
+                )
+
+    with tab_ensemble:
+        st.caption("🏎️ *Ensemble Learning & Telemetry Diagnostics: Bagging (Random Forest), Boosting (XGBoost & LightGBM), Bias–Variance Decomposition, and Regularization (L1/L2).*")
+        
+        if not check_ml_available():
+            st.warning("Ensemble analytics require `pandas`, `numpy`, and `scikit-learn`. Please ensure they are installed in your Python environment.")
+        else:
+            import importlib
+            import f1_ensemble_analytics
+            importlib.reload(f1_ensemble_analytics)
+            from f1_ensemble_analytics import (
+                generate_telemetry_regression_dataset,
+                extract_live_telemetry_for_ensemble,
+                benchmark_ensemble_models,
+                compute_bias_variance_tradeoff,
+                analyze_overfitting_underfitting,
+                analyze_regularization_impact,
+                STUDENT_STUDY_GUIDE,
+                TELEMETRY_FEATURES
+            )
+
+            # Data Source Toggle
+            col_ens_ctrl1, col_ens_ctrl2 = st.columns([1.5, 1.0])
+            with col_ens_ctrl1:
+                ensemble_data_mode = st.radio(
+                    "📊 Telemetry Dataset Source:",
+                    options=["⚡ Multi-Lap Synthetic Telemetry (1,000 Samples)", "🔴 Live Race Session Telemetry"],
+                    horizontal=True,
+                    key="ensemble_data_mode_choice"
+                )
+            with col_ens_ctrl2:
+                noise_slider = st.slider("🧪 Telemetry Sensor Noise Level (σ)", min_value=0.2, max_value=2.5, value=0.8, step=0.1, key="ens_noise_slider")
+
+            if "Live" in ensemble_data_mode:
+                df_ensemble_base = extract_live_telemetry_for_ensemble(state)
+            else:
+                df_ensemble_base = generate_telemetry_regression_dataset(n_samples=1000, noise_level=noise_slider)
+
+            sub_arena, sub_bv, sub_overfit, sub_guide = st.tabs([
+                "🏆 Ensemble Arena (Bagging vs. Boosting)",
+                "⚖️ Bias–Variance Trade-Off Lab",
+                "🛡️ Overfitting & Regularization Playground",
+                "📚 Student Study Guide & Theory Reference"
+            ])
+
+            # --- SUB-TAB 1: ENSEMBLE ARENA ---
+            with sub_arena:
+                st.subheader("🏁 Head-to-Head Benchmark: Bagging vs. Boosting")
+                st.write("Evaluating **Single Decision Tree** (Baseline) against **Bagging Regressor**, **Random Forest** (Bagging), **XGBoost** (Gradient Boosting), and **LightGBM** (Histogram Gradient Boosting) on F1 telemetry lap pace prediction.")
+
+                if st.button("🚀 Run Live Ensemble Benchmark", key="btn_run_ensemble_bench"):
+                    with st.spinner("Training and benchmarking ensemble models..."):
+                        bench_df, fitted_models = benchmark_ensemble_models(df_ensemble_base)
+                        st.session_state["ens_bench_df"] = bench_df
+                        st.session_state["ens_fitted_models"] = fitted_models
+
+                if "ens_bench_df" in st.session_state:
+                    bench_df = st.session_state["ens_bench_df"]
+                    
+                    # Top Metric Summary Cards
+                    top_model = bench_df.iloc[0]
+                    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+                    kpi1.metric("🥇 Champion Model", top_model["Model Name"].split(" (")[0], help="Highest R² on unseen telemetry holdout")
+                    kpi2.metric("🎯 Top R² Score", f"{top_model['R² Score']:.4f}", help="Variance of lap time explained")
+                    kpi3.metric("⏱️ Lowest MAE", f"{top_model['MAE (seconds)']:.3f} s", help="Mean Absolute Error in seconds per lap")
+                    kpi4.metric("⚡ Fastest Training", f"{bench_df['Train Latency (ms)'].min():.1f} ms", help="Lowest fit time across models")
+
+                    st.dataframe(
+                        bench_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Model Name": st.column_config.TextColumn("🤖 Algorithm"),
+                            "Paradigm": st.column_config.TextColumn("🏷️ Ensemble Class"),
+                            "Mechanism": st.column_config.TextColumn("⚙️ Core Mechanism"),
+                            "R² Score": st.column_config.NumberColumn("🎯 R² Score", format="%.4f"),
+                            "MAE (seconds)": st.column_config.NumberColumn("⏱️ MAE (s)", format="%.3f"),
+                            "RMSE (seconds)": st.column_config.NumberColumn("📉 RMSE (s)", format="%.3f"),
+                            "Train Latency (ms)": st.column_config.NumberColumn("⏱️ Train Time (ms)", format="%.1f"),
+                            "Predict Latency (ms)": st.column_config.NumberColumn("⚡ Predict Time (ms)", format="%.2f"),
+                        }
+                    )
+
+                    c_ch1, c_ch2 = st.columns(2)
+                    with c_ch1:
+                        st.subheader("🎯 Model Accuracy Comparison (R² Score)")
+                        chart_df_r2 = bench_df[["Model Name", "R² Score"]].set_index("Model Name")
+                        st.bar_chart(chart_df_r2)
+
+                    with c_ch2:
+                        st.subheader("⏱️ Lap Error Comparison (MAE in Seconds)")
+                        chart_df_mae = bench_df[["Model Name", "MAE (seconds)"]].set_index("Model Name")
+                        st.bar_chart(chart_df_mae)
+
+                    st.info("""
+                    💡 **Engineering Insight**: 
+                    * **Bagging (Random Forest)** trains independent trees in parallel on bootstrapped telemetry samples, drastically reducing model variance.
+                    * **Boosting (XGBoost / LightGBM)** builds sequential shallow trees, with each round fitting the gradient residuals of the previous model, effectively driving bias down while regularization keeps variance in check.
+                    """)
+                else:
+                    st.info("👆 Click **'Run Live Ensemble Benchmark'** to fit all models and compare their metrics.")
+
+            # --- SUB-TAB 2: BIAS-VARIANCE TRADEOFF LAB ---
+            with sub_bv:
+                st.subheader("⚖️ Bias–Variance Decomposition & Error Dynamics")
+                st.markdown(r"Total Error decomposes as: $\text{Error} = \text{Bias}^2 + \text{Variance} + \text{Noise}$. See how tree depth shifts the balance from underfitting to overfitting.")
+
+                col_bv1, col_bv2 = st.columns([1.5, 1.0])
+                with col_bv1:
+                    bv_model_family = st.selectbox(
+                        "🔍 Select Model Architecture:",
+                        options=["Bagging (Random Forest)", "Boosting (XGBoost)", "Boosting (LightGBM)", "Single Decision Tree"],
+                        index=0,
+                        key="bv_model_family_selector"
+                    )
+                with col_bv2:
+                    bootstraps_count = st.slider("🔄 Bootstrap Iterations", min_value=5, max_value=20, value=10, step=1, key="bv_bootstraps")
+
+                if st.button("📈 Compute Bias-Variance Decomposition", key="btn_run_bv"):
+                    with st.spinner("Executing bootstrap re-sampling decomposition..."):
+                        df_bv = compute_bias_variance_tradeoff(
+                            df_ensemble_base,
+                            model_family=bv_model_family,
+                            depth_range=[1, 2, 3, 4, 6, 8, 11, 15],
+                            n_bootstraps=bootstraps_count
+                        )
+                        st.session_state["df_bv"] = df_bv
+
+                if "df_bv" in st.session_state:
+                    df_bv = st.session_state["df_bv"]
+                    
+                    st.subheader("📊 Bias² vs. Variance vs. Test MSE Across Tree Depth")
+                    bv_chart_data = df_bv.set_index("Tree Depth")[["Test MSE", "Train MSE", "Bias² (Underfitting Error)", "Variance (Overfitting Error)"]]
+                    st.line_chart(bv_chart_data)
+
+                    best_depth_row = df_bv.loc[df_bv["Test MSE"].idxmin()]
+                    b1, b2, b3, b4 = st.columns(4)
+                    b1.metric("🎯 Optimal Depth", f"Depth {int(best_depth_row['Tree Depth'])}")
+                    b2.metric("📉 Min Test MSE", f"{best_depth_row['Test MSE']:.3f}")
+                    b3.metric("⚖️ Bias² at Optimum", f"{best_depth_row['Bias² (Underfitting Error)']:.3f}")
+                    b4.metric("🛡️ Variance at Optimum", f"{best_depth_row['Variance (Overfitting Error)']:.3f}")
+
+                    st.dataframe(df_bv, use_container_width=True, hide_index=True)
+
+                    st.success(f"""
+                    **Key Observation for {bv_model_family}**:
+                    * At **low depths (1–3)**: $\\text{{Bias}}^2$ dominates — the model is too rigid (**Underfitting / High Bias**).
+                    * At **optimal depth ({int(best_depth_row['Tree Depth'])})**: $\\text{{Bias}}^2 + \\text{{Variance}}$ is minimized, delivering peak generalization on unseen laps.
+                    * At **high depths (10+)**: $\\text{{Variance}}$ climbs while training MSE approaches zero — the model memorizes sensor noise (**Overfitting / High Variance**).
+                    """)
+                else:
+                    st.info("👆 Click **'Compute Bias-Variance Decomposition'** to analyze the tradeoff across depth levels.")
+
+            # --- SUB-TAB 3: OVERFITTING & REGULARIZATION PLAYGROUND ---
+            with sub_overfit:
+                st.subheader("🛡️ Overfitting, Underfitting & Regularization Simulator")
+                st.markdown(r"Interactively adjust tree depth, estimators, learning rate, and L1 / L2 penalties to inspect the **Generalization Gap** ($\Delta R^2$).")
+
+                c_ctrl1, c_ctrl2, c_ctrl3 = st.columns(3)
+                with c_ctrl1:
+                    sel_algo = st.selectbox("🤖 Model Algorithm:", options=["XGBoost", "LightGBM", "Random Forest", "Decision Tree"], key="diag_algo")
+                    sel_depth = st.slider("🌳 Max Tree Depth:", min_value=1, max_value=20, value=8, step=1, key="diag_depth")
+                with c_ctrl2:
+                    sel_est = st.slider("🌲 Number of Estimators:", min_value=10, max_value=120, value=50, step=10, key="diag_est") if sel_algo != "Decision Tree" else 1
+                    sel_lr = st.slider("⚡ Learning Rate (η):", min_value=0.01, max_value=0.40, value=0.10, step=0.01, key="diag_lr") if "Decision" not in sel_algo and "Forest" not in sel_algo else 0.1
+                with c_ctrl3:
+                    sel_l1 = st.slider("🎯 L1 Penalty (reg_alpha / Lasso):", min_value=0.0, max_value=10.0, value=0.1, step=0.1, key="diag_l1") if "Decision" not in sel_algo and "Forest" not in sel_algo else 0.0
+                    sel_l2 = st.slider("🛡️ L2 Penalty (reg_lambda / Ridge):", min_value=0.0, max_value=20.0, value=1.0, step=0.5, key="diag_l2") if "Decision" not in sel_algo and "Forest" not in sel_algo else 0.0
+
+                diag_res = analyze_overfitting_underfitting(
+                    df_ensemble_base,
+                    max_depth=sel_depth,
+                    n_estimators=sel_est,
+                    learning_rate=sel_lr,
+                    reg_alpha=sel_l1,
+                    reg_lambda=sel_l2,
+                    model_type=sel_algo
+                )
+
+                # Diagnostic Banner
+                if diag_res["diagnosis_color"] == "success":
+                    st.success(f"### {diag_res['diagnosis']}\n{diag_res['explanation']}")
+                elif diag_res["diagnosis_color"] == "warning":
+                    st.warning(f"### {diag_res['diagnosis']}\n{diag_res['explanation']}")
+                else:
+                    st.error(f"### {diag_res['diagnosis']}\n{diag_res['explanation']}")
+
+                m_c1, m_c2, m_c3, m_c4 = st.columns(4)
+                m_c1.metric("🎯 Train R²", f"{diag_res['train_r2']:.4f}")
+                m_c2.metric("🧪 Test R²", f"{diag_res['test_r2']:.4f}")
+                m_c3.metric("📏 Generalization Gap (Δ R²)", f"{diag_res['gen_gap_r2']:.4f}", help="Train R² minus Test R² (Large gap = Overfitting)")
+                m_c4.metric("📉 Test MSE", f"{diag_res['test_mse']:.3f} s²")
+
+                st.write("---")
+                st.subheader("🔬 Regularization Sweep: Taming High Variance")
+                st.caption("Inspect how sweeping L1 (Lasso) or L2 (Ridge) penalty dampens the overfitting gap on deep trees.")
+
+                sweep_col1, sweep_col2 = st.columns([1.5, 1.0])
+                with sweep_col1:
+                    reg_type_sweep = st.radio("Select Regularization Type to Sweep:", ["L2 (Ridge / reg_lambda)", "L1 (Lasso / reg_alpha)"], horizontal=True, key="reg_sweep_type")
+                with sweep_col2:
+                    run_sweep_btn = st.button("🧪 Run Regularization Sweep", key="btn_run_reg_sweep")
+
+                if run_sweep_btn:
+                    with st.spinner("Sweeping regularization penalties..."):
+                        df_reg_sweep = analyze_regularization_impact(
+                            df_ensemble_base,
+                            reg_type="L1 (Lasso / reg_alpha)" if "L1" in reg_type_sweep else "L2 (Ridge)",
+                            penalty_values=[0.0, 0.05, 0.2, 1.0, 5.0, 15.0, 40.0, 80.0]
+                        )
+                        st.session_state["df_reg_sweep"] = df_reg_sweep
+
+                if "df_reg_sweep" in st.session_state:
+                    df_reg_sweep = st.session_state["df_reg_sweep"]
+                    st.line_chart(df_reg_sweep.set_index("Penalty Strength (λ / α)")[["Train R²", "Test R²", "Generalization Gap (Δ R²)"]])
+                    st.dataframe(df_reg_sweep, use_container_width=True, hide_index=True)
+                    st.info("💡 **Takeaway**: As penalty strength increases from 0.0 upwards, the Generalization Gap narrows, preventing the tree booster from fitting noise.")
+
+            # --- SUB-TAB 4: STUDENT STUDY GUIDE & NOTES ---
+            with sub_guide:
+                st.subheader("📚 F1 Telemetry Machine Learning Student Master Guide")
+                st.markdown("Curated reference notes, formulas, and interview-ready concepts covering Ensemble Methods, Bias-Variance, Overfitting, and Regularization.")
+
+                with st.expander("🏁 1. Ensemble Methods: Bagging vs. Boosting (Architecture & XGBoost / LightGBM)", expanded=True):
+                    st.markdown(STUDENT_STUDY_GUIDE["bagging_vs_boosting"])
+
+                with st.expander("⚖️ 2. Bias–Variance Decomposition & Error Trade-off", expanded=False):
+                    st.markdown(STUDENT_STUDY_GUIDE["bias_variance"])
+
+                with st.expander("🛡️ 3. Overfitting vs. Underfitting: Symptoms, Root Causes & Prevention", expanded=False):
+                    st.markdown(STUDENT_STUDY_GUIDE["overfitting_remedies"])
+
+                with st.expander("🎯 4. Regularization (L1 Lasso vs. L2 Ridge) in Tree Boosters", expanded=False):
+                    st.markdown(STUDENT_STUDY_GUIDE["regularization_l1_l2"])
+
+                # Downloadable Study Notes & Diagnostics Export
+                st.write("---")
+                col_exp1, col_exp2 = st.columns(2)
+                with col_exp1:
+                    md_notes = f"""# F1 Telemetry Machine Learning Study Guide
+{STUDENT_STUDY_GUIDE['bagging_vs_boosting']}
+
+{STUDENT_STUDY_GUIDE['bias_variance']}
+
+{STUDENT_STUDY_GUIDE['overfitting_remedies']}
+
+{STUDENT_STUDY_GUIDE['regularization_l1_l2']}
+"""
+                    st.download_button(
+                        "📥 Download Student Study Notes (.md)",
+                        md_notes.encode("utf-8"),
+                        file_name=f"f1_ensemble_study_guide_{datetime.now().strftime('%Y%m%d')}.md",
+                        mime="text/markdown",
+                        help="Export the complete theory guide and formulas as Markdown"
+                    )
+                with col_exp2:
+                    csv_ens_data = df_ensemble_base.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        "📥 Download Telemetry Regression Dataset (CSV)",
+                        csv_ens_data,
+                        file_name=f"f1_ensemble_telemetry_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        help="Download the multi-channel F1 telemetry dataset used for ensemble benchmarking"
+                    )
 
     st.markdown("---")
 

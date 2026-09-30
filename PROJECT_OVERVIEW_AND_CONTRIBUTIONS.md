@@ -30,6 +30,8 @@ The **Formula 1 Telemetry Simulator & Predictive Analytics** is a high-performan
 | **Phase 8: Eliminating Cryptic Column Names** | Switching charts to tables displayed ugly `index -- streamlit-generated` / `color -- streamlit-generated` columns. | Converted chart data into cleanly indexed `pandas.DataFrame` objects, and engineered a dedicated **`📋 Telemetry Data Tables View`** with beginner-friendly headers and hover tooltips. |
 | **Phase 9: Instant Startup Optimization** | Importing heavy ML modules on line 1 caused a 20-30s launch delay and terminal email prompt. | Lazy-loaded Scikit-Learn on demand, added `.streamlit/config.toml` to disable usage statistics, cutting startup time to **< 1 second**. |
 | **Phase 10: Code Cleanliness** | Author personal tags appeared across titles and documentation. | Removed all personal author references from headers, titles, README, and license files. |
+| **Phase 11: Dimensionality Reduction (PCA & t-SNE)** | Raw multi-channel telemetry (10+ sensors) was overwhelming to analyze simultaneously; needed unsupervised clustering and feature compression. | Architected `f1_dimensionality_reduction.py` implementing PCA (eigenvalue decomposition, scree plots, loadings) and t-SNE (Student-t non-linear manifold learning with perplexity tuning). Added an interactive 3rd tab to the dashboard with side-by-side comparison, beginner intuition guide, and CSV dataset export. |
+| **Phase 12: Ensemble Methods, Bias-Variance & Regularization** | Needed comprehensive implementation of Bagging and Boosting (XGBoost, LightGBM), Bias-Variance Tradeoff decomposition, Overfitting/Underfitting diagnostics, and L1/L2 Regularization. | Engineered `f1_ensemble_analytics.py` and integrated the interactive 4th studio tab (`🌳 Ensemble Methods & Diagnostics`): head-to-head benchmark arena, empirical Bias-Variance decomposition chart, live overfitting/regularization sliders (`reg_alpha`, `reg_lambda`), and student study guide with exportable Markdown & telemetry CSVs. |
 
 ---
 
@@ -94,6 +96,9 @@ The **Formula 1 Telemetry Simulator & Predictive Analytics** is a high-performan
   5. Built feature importance extraction to analyze how tyre choice, aggression, fuel, and brakes influence race pace.
   6. Implemented **Joblib model serialization** (allowing users to download `.joblib` model binaries) and built live session inference for average lap time predictions.
   7. Optimized initial app launch speed by implementing **lazy loading** for heavy ML libraries.
+  8. Engineered the **Principal Component Analysis (PCA)** pipeline: feature standardization, covariance eigen-decomposition, explained variance ratios, scree analysis, and sensor loadings matrix.
+  9. Implemented **t-Distributed Stochastic Neighbor Embedding (t-SNE)** with Barnes-Hut optimization, Student-t low-dimensional distribution, and interactive perplexity/iteration calibration.
+  10. Developed the beginner-friendly intuition guides (Shadow Analogy & Cocktail Party Analogy) and built the side-by-side PCA vs. t-SNE face-off evaluation view.
 
 ---
 

@@ -74,6 +74,12 @@ Choose from 7 real-world Formula 1 circuits with dynamic physics calibration:
 - Predicts expected average lap times for every car in the current live session.
 - Allows exporting trained `.joblib` models and `.csv` prediction sheets.
 
+### 🌳 5. Ensemble Studio & Model Diagnostics
+- **Ensemble Arena**: Head-to-head benchmarking of Single Decision Tree, Bagging Regressor, Random Forest, XGBoost, and LightGBM.
+- **Bias–Variance Trade-Off Lab**: Empirical decomposition of $\text{Error} = \text{Bias}^2 + \text{Variance} + \sigma^2$ across tree depths.
+- **Overfitting & Regularization Simulator**: Real-time diagnostic badge (High Bias vs Balanced vs High Variance), Generalization Gap ($\Delta R^2$), and interactive sliders for L1 Lasso (`reg_alpha`) and L2 Ridge (`reg_lambda`).
+- **Student Reference Guide**: Integrated mathematical formulations, causes/remedies of overfitting, and downloadable markdown study notes.
+
 ---
 
 ## 🛠️ Tech Stack
@@ -81,9 +87,9 @@ Choose from 7 real-world Formula 1 circuits with dynamic physics calibration:
 - **Language**: Python 3.10+ (tested on Python 3.14)
 - **UI & Dashboard Framework**: Streamlit (v1.40+)
 - **Data Manipulation**: NumPy, Pandas
-- **Machine Learning**: Scikit-Learn (`RandomForestRegressor`, `ColumnTransformer`, `Pipeline`)
+- **Machine Learning**: Scikit-Learn, XGBoost, LightGBM
 - **Model Serialization**: Joblib
-- **Data Export**: Standard CSV & In-Memory BytesIO
+- **Data Export**: Standard CSV & Markdown Notes
 
 ---
 
