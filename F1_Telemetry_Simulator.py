@@ -136,16 +136,16 @@ DEFAULT_TRACK_KEY = "🇮🇹 Monza (Autodromo Nazionale Monza)"
 # Constants & tuning
 # -----------------------------------------------------------------------------
 NUM_CARS = 8
-CAR_NAMES = ["VER", "HAM", "LEC", "NOR", "RUS", "ALO", "SAI", "PER"][:NUM_CARS]
+CAR_NAMES = ["VER", "HAM", "LEC", "NOR", "PIA", "RUS", "ALO", "SAI"][:NUM_CARS]
 DRIVER_LABELS = {
-    "VER": "VER (Verstappen)",
-    "HAM": "HAM (Hamilton)",
-    "LEC": "LEC (Leclerc)",
-    "NOR": "NOR (Norris)",
-    "RUS": "RUS (Russell)",
-    "ALO": "ALO (Alonso)",
-    "SAI": "SAI (Sainz)",
-    "PER": "PER (Perez)"
+    "VER": "VER (Verstappen - Red Bull)",
+    "HAM": "HAM (Hamilton - Ferrari)",
+    "LEC": "LEC (Leclerc - Ferrari)",
+    "NOR": "NOR (Norris - McLaren)",
+    "PIA": "PIA (Piastri - McLaren)",
+    "RUS": "RUS (Russell - Mercedes)",
+    "ALO": "ALO (Alonso - Aston Martin)",
+    "SAI": "SAI (Sainz - Williams)"
 }
 TYRE_COMPOUNDS = ["Soft", "Medium", "Hard", "Inter", "Wet"]
 
@@ -601,7 +601,7 @@ def prepare_features_from_state(state_arg: Dict[str, Dict[str, Any]]):
 # Streamlit App Execution
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    st.set_page_config(page_title="F1 Telemetry Simulator — Clean Build", layout="wide")
+    st.set_page_config(page_title="F1 2025 Telemetry Simulator & Predictive Analytics", layout="wide")
 
     # Initial circuit selection
     if "selected_track" not in st.session_state:
@@ -639,7 +639,8 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------------
     # Header & Track Selector
     # -------------------------------------------------------------------------
-    st.title("🏎️ F1 Telemetry Simulator")
+    st.title("🏎️ Formula 1 2025 Telemetry Simulator & Predictive Analytics")
+    st.caption("🔴 **Official 2025 Championship Season Grid** • Lewis Hamilton at Ferrari • Real-Time Telemetry & ML Ensemble Studio")
 
     track_col, stat_col1, stat_col2, stat_col3, stat_col4 = st.columns([2.5, 1, 1, 1, 1.2])
 
@@ -887,7 +888,7 @@ if __name__ == "__main__":
         hide_index=True,
         column_config={
             "Position": st.column_config.TextColumn("🏆 Pos", help="Current position in race (P1 to P8) based on total distance covered"),
-            "Driver": st.column_config.TextColumn("🏎️ Driver", help="F1 Driver code (VER, HAM, LEC, NOR, RUS, ALO, SAI, PER)"),
+            "Driver": st.column_config.TextColumn("🏎️ Driver", help="F1 2025 Driver code (VER, HAM, LEC, NOR, PIA, RUS, ALO, SAI)"),
             "Lap": st.column_config.TextColumn("🔄 Lap", help="Current Lap / Total Grand Prix Laps"),
             "Progress": st.column_config.ProgressColumn("📍 Lap Progress", help="Track completion percentage for current lap (0% start to 100% finish line)", min_value=0, max_value=100, format="%d%%"),
             "Race Progress": st.column_config.ProgressColumn("🏁 Race Progress", help="Overall Grand Prix completion percentage", min_value=0, max_value=100, format="%d%%"),

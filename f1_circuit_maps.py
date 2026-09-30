@@ -152,16 +152,16 @@ def get_track_spline(track_name: str, num_samples: int = 350) -> np.ndarray:
     return np.column_stack([x_smooth, y_smooth])
 
 
-# Driver distinct F1 team broadcast colors
+# Driver distinct 2025 F1 team broadcast colors
 DRIVER_TEAM_COLORS = {
     "VER": "#3671C6",  # Red Bull Navy Blue
-    "PER": "#3671C6",
-    "HAM": "#6CD3BF",  # Mercedes Petronas Teal
-    "RUS": "#6CD3BF",
+    "HAM": "#F91536",  # Ferrari Rosso Corsa (Hamilton 2025 Transfer)
     "LEC": "#F91536",  # Ferrari Rosso Corsa
-    "SAI": "#F91536",
     "NOR": "#FF8000",  # McLaren Papaya Orange
-    "ALO": "#229971"   # Aston Martin Racing Green
+    "PIA": "#FF8000",  # McLaren Papaya Orange
+    "RUS": "#6CD3BF",  # Mercedes Petronas Teal
+    "ALO": "#229971",  # Aston Martin Racing Green
+    "SAI": "#00A0DE"   # Williams Racing Heritage Blue (Sainz 2025 Transfer)
 }
 
 

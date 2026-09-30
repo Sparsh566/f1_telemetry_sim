@@ -12,7 +12,7 @@ The system simulates 8 Formula 1 cars across 7 real-world Grand Prix circuits, m
 To create an authentic, interactive Formula 1 race engineering environment that combines **stochastic vehicle physics**, **real-world circuit profiles**, **real-time dashboard analytics**, and **predictive machine learning**.
 
 ### ⚙️ How the Simulator Works
-1. **Circuit Physics Modeling**: Tracks 8 real F1 drivers (`VER`, `HAM`, `LEC`, `NOR`, `RUS`, `ALO`, `SAI`, `PER`) around selected world-championship tracks with authentic circuit lengths (e.g., 5.793 km Monza, 7.004 km Spa, 3.337 km Monaco).
+1. **Circuit Physics Modeling**: Tracks 8 real F1 drivers on the **official 2025 World Championship grid** (`VER`, `HAM`, `LEC`, `NOR`, `PIA`, `RUS`, `ALO`, `SAI`) around selected world-championship tracks with authentic circuit lengths (e.g., 5.793 km Monza, 7.004 km Spa, 3.337 km Monaco).
 2. **Dynamic Physics Loop**:
    - **Speed & Throttle**: Computed each tick using driver aggression, throttle percentage, and aerodynamic downforce levels.
    - **Tyre Model**: Soft, Medium, Hard, Inter, and Wet compounds with unique grip coefficients and progressive degradation curves.
@@ -133,7 +133,7 @@ python -m streamlit run F1_Telemetry_Simulator.py
 | Heading | Name | Meaning & Impact |
 | :--- | :--- | :--- |
 | **🏆 Pos** | Race Position | Driver standing (`P1` to `P8`) based on total race distance covered. |
-| **🏎️ Driver** | Driver Code | 3-letter abbreviation (`VER`, `HAM`, `LEC`, `NOR`, `RUS`, `ALO`, `SAI`, `PER`). |
+| **🏎️ Driver** | Driver Code | 3-letter abbreviation (`VER`, `HAM`, `LEC`, `NOR`, `PIA`, `RUS`, `ALO`, `SAI`). |
 | **🔄 Lap** | Lap Count | Current lap number out of total scheduled Grand Prix laps (e.g. `4/53`). |
 | **📍 Lap Progress** | Circuit Completion | Track distance completed in the active lap (`0%` to `100%`). |
 | **⏱️ Sector** | Timing Sector | Current circuit sector (`S1` start, `S2` middle technical, `S3` final straight). |
