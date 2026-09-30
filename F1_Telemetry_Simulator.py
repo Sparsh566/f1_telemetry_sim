@@ -776,7 +776,7 @@ if __name__ == "__main__":
         current_aggr = float(st.session_state.sim_state[selected]["aggression"])
         if aggr_key not in st.session_state:
             st.session_state[aggr_key] = current_aggr
-        new_aggr = st.slider("Aggression (selected)", 0.7, 1.4, current_aggr, 0.01, key=aggr_key)
+        new_aggr = st.slider("Aggression (selected)", min_value=0.7, max_value=1.4, step=0.01, key=aggr_key)
         st.session_state.sim_state[selected]["aggression"] = float(new_aggr)
 
         st.write("---")
@@ -911,20 +911,8 @@ if __name__ == "__main__":
     # Telemetry Trends: Dual View (Interactive Graphs vs Clean Data Tables)
     # -------------------------------------------------------------------------
     st.write("### 📊 Live Telemetry Analysis")
-    
-    DRIVER_LABELS = {
-        "VER": "VER (Verstappen)",
-        "HAM": "HAM (Hamilton)",
-        "LEC": "LEC (Leclerc)",
-        "NOR": "NOR (Norris)",
-        "RUS": "RUS (Russell)",
-        "ALO": "ALO (Alonso)",
-        "SAI": "SAI (Sainz)",
-        "PER": "PER (Perez)"
-    }
 
     # Prepare clean DataFrames with explicit headers and index names
-    import pandas as pd
     history_len = min(len(car["history"]) for car in state.values()) if state else 0
     ticks_index = [f"T-{history_len - 1 - i}" for i in range(history_len)] if history_len > 0 else []
 
