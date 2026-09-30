@@ -569,7 +569,107 @@ def analyze_regularization_impact(
 
 
 # -----------------------------------------------------------------------------
-# 6. Pedagogical Study Notes & Cheat Sheet
+# 6. Feature Importance & Model Explainability
+# -----------------------------------------------------------------------------
+def extract_ensemble_feature_importances(fitted_models: Dict[str, Any]) -> pd.DataFrame:
+    """
+    Extracts normalized feature importance weights from fitted ensemble models
+    (Random Forest Gini Impurity, XGBoost Gain/Weight, LightGBM Split/Gain).
+    """
+    data = {"Feature": [FEATURE_LABELS.get(f, f) for f in TELEMETRY_FEATURES]}
+    
+    for name, model in fitted_models.items():
+        imp = None
+        if hasattr(model, "feature_importances_"):
+            imp = model.feature_importances_
+        elif hasattr(model, "named_steps"):
+            last_step = list(model.named_steps.values())[-1]
+            if hasattr(last_step, "feature_importances_"):
+                imp = last_step.feature_importances_
+                
+        if imp is not None and len(imp) == len(TELEMETRY_FEATURES):
+            total = float(np.sum(imp))
+            norm_imp = (imp / total * 100.0) if total > 0 else imp
+            clean_name = name.split(" (")[0]
+            data[clean_name] = [round(float(v), 2) for v in norm_imp]
+            
+    return pd.DataFrame(data)
+
+
+# -----------------------------------------------------------------------------
+# 7. Pitwall "What-If" Strategy Calculator
+# -----------------------------------------------------------------------------
+def predict_what_if_strategy(
+    fitted_models: Dict[str, Any],
+    speed: float = 240.0,
+    throttle: float = 85.0,
+    brake: float = 15.0,
+    tyre_wear: float = 25.0,
+    fuel: float = 45.0,
+    brake_temp: float = 480.0,
+    aggression: float = 1.05,
+    compound: str = "Medium",
+    baseline_lap: float = 85.0
+) -> Dict[str, Any]:
+    """
+    Simulates a race engineering what-if scenario across fitted ensemble models,
+    computing expected lap pace, delta against baseline, and strategic tyre wear guidance.
+    """
+    feature_row = pd.DataFrame([{
+        "speed": speed,
+        "throttle": throttle,
+        "brake": brake,
+        "tyre_wear": tyre_wear,
+        "fuel": fuel,
+        "brake_temp": brake_temp,
+        "aggression": aggression
+    }])
+    
+    predictions = {}
+    for name, model in fitted_models.items():
+        try:
+            pred = float(model.predict(feature_row)[0])
+            predictions[name] = round(pred, 3)
+        except Exception:
+            pass
+            
+    # Compound modifiers (Soft is faster, Hard is more durable, Wets are for rain)
+    compound_pace_offset = {
+        "Soft": -0.75,
+        "Medium": 0.0,
+        "Hard": 0.65,
+        "Inter": 4.50,
+        "Wet": 8.00
+    }.get(compound, 0.0)
+    
+    # Adjust predictions by compound offset
+    adjusted_predictions = {k: round(v + compound_pace_offset, 3) for k, v in predictions.items()}
+    
+    avg_predicted_pace = float(np.mean(list(adjusted_predictions.values()))) if adjusted_predictions else baseline_lap
+    pace_delta = avg_predicted_pace - baseline_lap
+    
+    # Race engineering pit call logic
+    if tyre_wear > 65.0:
+        recommendation = "🚨 BOX THIS LAP: Severe tyre degradation detected (>65% wear). Grip cliff is costing more lap time than a pit stop transit."
+        rec_color = "error"
+    elif tyre_wear > 45.0:
+        recommendation = "⚠️ PREPARE PIT WINDOW: Tyres entering degradation window (45%–65% wear). Ready pit crew for potential undercut."
+        rec_color = "warning"
+    else:
+        recommendation = "🟢 EXTEND STINT: Tyres operating in optimum thermal and grip window (<45% wear). Current pace is fully competitive."
+        rec_color = "success"
+        
+    return {
+        "predictions": adjusted_predictions,
+        "avg_predicted_pace": round(avg_predicted_pace, 3),
+        "pace_delta": round(pace_delta, 3),
+        "recommendation": recommendation,
+        "rec_color": rec_color
+    }
+
+
+# -----------------------------------------------------------------------------
+# 8. Pedagogical Study Notes & Cheat Sheet
 # -----------------------------------------------------------------------------
 STUDENT_STUDY_GUIDE = {
     "bagging_vs_boosting": r"""

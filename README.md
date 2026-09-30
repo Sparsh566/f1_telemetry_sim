@@ -66,6 +66,7 @@ Choose from 7 real-world Formula 1 circuits with dynamic physics calibration:
   - **Speed & Velocity**: Current Speed, Max Recorded Speed, Average Speed, DRS Status.
   - **Lap Timing & Pace**: Position, Current Pace, Previous Lap, Personal Best, Gap to Leader.
   - **Brakes & Tyres**: Disc Temp, Thermal Window (`Optimal`, `Cold`, `Overheated`), Compound, Tyre Wear %, Fuel Remaining %, Driver Aggression.
+- **🗺️ 2D Circuit GPS Map & Battle Visualizer**: High-precision 2D parametric track layouts for all 7 Grand Prix circuits with live car markers, team-colored dots, sector splits, and real-time gap tracking.
 
 ### 🤖 4. Machine Learning Module
 - Generates synthetic multi-race training datasets.
@@ -75,10 +76,12 @@ Choose from 7 real-world Formula 1 circuits with dynamic physics calibration:
 - Allows exporting trained `.joblib` models and `.csv` prediction sheets.
 
 ### 🌳 5. Ensemble Studio & Model Diagnostics
-- **Ensemble Arena**: Head-to-head benchmarking of Single Decision Tree, Bagging Regressor, Random Forest, XGBoost, and LightGBM.
-- **Bias–Variance Trade-Off Lab**: Empirical decomposition of $\text{Error} = \text{Bias}^2 + \text{Variance} + \sigma^2$ across tree depths.
-- **Overfitting & Regularization Simulator**: Real-time diagnostic badge (High Bias vs Balanced vs High Variance), Generalization Gap ($\Delta R^2$), and interactive sliders for L1 Lasso (`reg_alpha`) and L2 Ridge (`reg_lambda`).
-- **Student Reference Guide**: Integrated mathematical formulations, causes/remedies of overfitting, and downloadable markdown study notes.
+- **🏆 Ensemble Arena**: Head-to-head benchmarking of Single Decision Tree, Bagging Regressor, Random Forest, XGBoost, and LightGBM.
+- **📊 Feature Importance & Explainability**: Compares Gini impurity vs Gain vs Split frequencies across sensors.
+- **🔮 Pitwall 'What-If' Strategy Calculator**: Live sandbox to simulate tyre compounds, wear, fuel, and aggression with real-time pitstop advice.
+- **⚖️ Bias–Variance Trade-Off Lab**: Empirical decomposition of $\text{Error} = \text{Bias}^2 + \text{Variance} + \sigma^2$ across tree depths.
+- **🛡️ Overfitting & Regularization Simulator**: Real-time diagnostic badge (High Bias vs Balanced vs High Variance), Generalization Gap ($\Delta R^2$), and interactive sliders for L1 Lasso (`reg_alpha`) and L2 Ridge (`reg_lambda`).
+- **📚 Student Reference Guide**: Integrated mathematical formulations, causes/remedies of overfitting, and downloadable markdown study notes.
 
 ---
 
