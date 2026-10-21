@@ -44,7 +44,14 @@ To create an authentic, interactive Formula 1 race engineering environment that 
 
 ## 🚀 Key Features
 
-### 🏁 1. Grand Prix Circuit Selection
+### 🎮 1. Easy Spectator Mode (Beginner & Non-Tech Friendly)
+- **🏎️ Live 2D Grand Prix Track Map**: Watch all 8 cars battle and overtake in real time on high-accuracy 2D track layouts.
+- **🎙️ Live F1 TV Commentary Feed**: Generates real-time broadcast commentary in plain English (leader gaps, wheel-to-wheel battles, tyre cliff alerts, and DRS activations).
+- **📞 1-Click Pitstop Radio**: Take the pitwall headset and order tyre changes for any driver with a single click.
+- **📺 Broadcast TV Tower Leaderboard**: Simplified standings showing positions P1-P8, car speeds, and colour-coded tyre health (🟢 Fresh, 🟡 Used, 🔴 Critical/Box Now).
+- **📖 F1 Beginner's Rules & Strategy Guide**: Plain-English explanations of the 5 tyre compounds, the tyre cliff, fuel burn weight, DRS overtaking, and pit strategy.
+
+### 🏁 2. Grand Prix Circuit Selection
 Choose from 7 real-world Formula 1 circuits with dynamic physics calibration:
 - **🇮🇹 Monza (Autodromo Nazionale Monza)**: 5.793 km, 53 laps — ultra-high top speed (up to 355 km/h), heavy chicane braking.
 - **🇬🇧 Silverstone (Silverstone Circuit)**: 5.891 km, 52 laps — high-speed sweeping corners, intense lateral tyre stress.
@@ -83,6 +90,14 @@ Choose from 7 real-world Formula 1 circuits with dynamic physics calibration:
 - **🛡️ Overfitting & Regularization Simulator**: Real-time diagnostic badge (High Bias vs Balanced vs High Variance), Generalization Gap ($\Delta R^2$), and interactive sliders for L1 Lasso (`reg_alpha`) and L2 Ridge (`reg_lambda`).
 - **📚 Student Reference Guide**: Integrated mathematical formulations, causes/remedies of overfitting, and downloadable markdown study notes.
 
+### 🧠 6. From-Scratch Neural Networks & Model Deployment Hub
+- **⚡ Pure-NumPy Multi-Layer Perceptron (MLP)**: Transparent feedforward neural network engineered from first principles with He/Xavier Glorot initialization, forward caching, and analytical backpropagation matrix calculus.
+- **🏁 3-Way Optimizer Convergence Race**: Side-by-side loss convergence tournament comparing **Vanilla SGD**, **SGD with Polyak Momentum (0.9)**, and **Adam (Adaptive Moment Estimation)** on identical initial weights.
+- **🎯 Single Perceptron Pit Window Classifier**: Visualizes Frank Rosenblatt's 1958 linear separator for binary pit decisions based on tyre degradation and pace drop.
+- **🧬 Activation Functions & Exact Derivatives**: Interactive mathematical playground plotting curves and gradients for **ReLU**, **Leaky ReLU**, **Sigmoid**, **Tanh**, and **Linear** identity.
+- **📦 Model Deployment Hub (Pickle vs. Joblib)**: Empirical serialization benchmark comparing byte payload size, serialization latency, load time, and zero-copy `memmap` memory mapping. Supports exporting, uploading, and deploying serialized models to generate live pitwall inferences across all 8 active drivers.
+- **📚 Student Deep Learning Master Guide**: Step-by-step mathematical explanations, chain rule derivations, optimizer formulations, and one-click `.md` notes export.
+
 ---
 
 ## 🛠️ Tech Stack
@@ -90,8 +105,8 @@ Choose from 7 real-world Formula 1 circuits with dynamic physics calibration:
 - **Language**: Python 3.10+ (tested on Python 3.14)
 - **UI & Dashboard Framework**: Streamlit (v1.40+)
 - **Data Manipulation**: NumPy, Pandas
-- **Machine Learning**: Scikit-Learn, XGBoost, LightGBM
-- **Model Serialization**: Joblib
+- **Machine Learning & Deep Learning**: Scikit-Learn, Pure NumPy (From-Scratch MLP, Activations, SGD/Adam, Backprop), XGBoost, LightGBM
+- **Model Deployment & Serialization**: Joblib, Python Pickle (`memmap` zero-copy vs object stream)
 - **Data Export**: Standard CSV & Markdown Notes
 
 ---
@@ -125,6 +140,28 @@ pip install -r requirements.txt
 python -m streamlit run F1_Telemetry_Simulator.py
 ```
 *The app will automatically open in your default browser at `http://localhost:8501`.*
+
+### 5️⃣ Run Automated Unit Tests (26 Tests)
+```bash
+python run_tests.py
+```
+*Executes unit tests covering activations, loss gradients, optimizers, finite-difference backprop checks, model persistence, and leak-free race splitting.*
+
+### 6️⃣ Run Standalone Model Inference (CLI)
+```bash
+python ml/predict.py --model models/f1_rf_pipeline.joblib
+```
+*Loads serialized artifacts and executes predictions on telemetry features independently of Streamlit.*
+
+---
+
+## 🔬 Scientific & Simulation Disclaimer
+This project is an **approximate educational simulation** built for learning and demonstration. Vehicle dynamics, thermodynamics, tyre wear, and telemetry distributions are mathematical approximations designed to illustrate race engineering concepts and machine learning workflows; they do not reproduce proprietary, track-measured telemetry from official Formula 1 teams. All machine learning metrics reflect synthetic simulator data.
+
+---
+
+## 🛡️ Model Deployment Security Notice
+Python `pickle` and `joblib` artifacts use bytecode serialization. When loaded via `joblib.load()` or `pickle.load()`, arbitrary Python code can be executed. **Never load model files from untrusted or unverified sources.**
 
 ---
 

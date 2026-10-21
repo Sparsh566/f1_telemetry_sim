@@ -220,6 +220,8 @@ def make_initial_state(track_info: Dict[str, Any] = None) -> Dict[str, Dict[str,
             "in_pit": False,
             "pit_timer": 0.0,
             "pit_tyre_choice": None,
+            "pit_stops": 0,
+            "incident_count": 0,
             "aggression": aggression,
             "incident": False,
             "finished": False,
@@ -304,6 +306,7 @@ def simulate_step(state: Dict[str, Dict[str, Any]], dt: float = 1.0, safety_car_
             speed = max(0, speed * 0.5)
             lap_time += random.uniform(1.5, 5.0)
             car["incident"] = True
+            car["incident_count"] = car.get("incident_count", 0) + 1
         else:
             car["incident"] = False
 
@@ -329,6 +332,7 @@ def simulate_step(state: Dict[str, Dict[str, Any]], dt: float = 1.0, safety_car_
                 car["tyre_wear"] = min(0.20, car.get("tyre_wear", 1.0) * 0.10)
                 car["in_pit"] = False
                 car["pit_timer"] = 0.0
+                car["pit_stops"] = car.get("pit_stops", 0) + 1
 
         # DRS handling (activation chance influenced by DRS zone count)
         drs_chance = 0.03 * drs_zones
@@ -482,119 +486,162 @@ def export_csv_bytes(state_arg: Dict[str, Dict[str, Any]], track_name: str = "Mo
 
 
 # -----------------------------------------------------------------------------
-# ML Helper Functions (Lazy loaded on demand)
+# ML & Deep Learning Pipeline (Modular 'ml' Package)
 # -----------------------------------------------------------------------------
-def get_ml_modules():
-    import pandas as pd
-    import numpy as np
-    from sklearn.ensemble import RandomForestRegressor
-    from sklearn.pipeline import Pipeline
-    from sklearn.preprocessing import OneHotEncoder, StandardScaler
-    from sklearn.compose import ColumnTransformer
-    from sklearn.model_selection import train_test_split
-    from sklearn.metrics import r2_score, mean_absolute_error
-    import joblib
-    return pd, np, RandomForestRegressor, Pipeline, OneHotEncoder, StandardScaler, ColumnTransformer, train_test_split, r2_score, mean_absolute_error, joblib
+from ml.dataset import (
+    ALL_FEATURES,
+    CATEGORICAL_FEATURES,
+    NUMERICAL_FEATURES,
+    TARGET_COLUMN,
+    FEATURE_LABELS,
+    validate_feature_schema,
+    build_leak_free_race_dataset,
+    split_by_race_group
+)
+from ml.model_evaluation import (
+    calculate_regression_metrics,
+    BaselineMeanLapRegressor,
+    evaluate_model_against_baseline
+)
+from ml.model_training import (
+    create_f1_regression_pipeline,
+    train_f1_lap_predictor
+)
+from ml.model_persistence import (
+    save_model_joblib,
+    load_model_joblib,
+    save_model_pickle,
+    load_model_pickle,
+    verify_prediction_equivalence,
+    benchmark_serialization_formats,
+    SECURITY_WARNING
+)
+from ml.predict import predict_lap_time
+from ml.activations import ACTIVATIONS
+from ml.losses import LossFunction
+from ml.optimizers import SGDOptimizer, SGDMomentumOptimizer, AdamOptimizer
+from ml.neural_network_numpy import (
+    SinglePerceptron,
+    DenseLayer,
+    NeuralNetwork,
+    NumpyStandardScaler,
+    check_network_gradients,
+    save_numpy_network_weights,
+    load_numpy_network_weights
+)
 
-def run_simulated_race(ticks: int = 300, dt: float = 1.0, safety_car_prob: float = 0.0002, track_info: Dict[str, Any] = None):
-    pd, np, *_ = get_ml_modules()
-    if track_info is None:
-        track_info = TRACKS[DEFAULT_TRACK_KEY]
-    state_local = make_initial_state(track_info)
-    safety_car_active_local = False
-    sc_timer_local = 0.0
-    for _ in range(int(ticks)):
-        if random.random() < float(safety_car_prob):
-            safety_car_active_local = not safety_car_active_local
-            sc_timer_local = float(random.uniform(30, 90)) if safety_car_active_local else 0.0
-        if sc_timer_local > 0:
-            sc_timer_local -= dt
-            if sc_timer_local <= 0:
-                safety_car_active_local = False
-        state_local = simulate_step(state_local, dt=dt, safety_car_active=safety_car_active_local, track_info=track_info, speed_mult=1.0)
-    rows_local = []
-    for name, car in state_local.items():
-        history = list(car.get("history", []))
-        if not history:
-            continue
-        avg_speed = float(np.mean([h.get("speed", 0.0) for h in history]))
-        avg_lap = float(np.mean([h.get("lap_time", car.get("lap_time", 0.0)) for h in history]))
-        avg_brake = float(np.mean([h.get("brake_temp", BRAKE_MIN_TEMP) for h in history]))
-        pit_count = int(any(h.get("in_pit", False) for h in history))
-        incidents = int(any(h.get("incident", False) for h in history) or bool(car.get("incident", False)))
-        rows_local.append({
-            "car": name,
-            "tyre": car.get("tyre", "Unknown"),
-            "start_aggression": float(car.get("aggression", 1.0)),
-            "start_fuel": float(car.get("fuel", 0.0)),
-            "start_tyre_wear": float(car.get("tyre_wear", 0.0)),
-            "start_brake_temp": float(car.get("brake_temp", BRAKE_MIN_TEMP)),
-            "avg_speed": avg_speed,
-            "avg_brake": avg_brake,
-            "pit_count": pit_count,
-            "incidents": incidents,
-            "target_avg_lap": avg_lap
-        })
-    return pd.DataFrame(rows_local)
 
-def build_training_dataset(num_races: int = 100, ticks_per_race: int = 300, show_progress: bool = False, track_info: Dict[str, Any] = None):
-    pd, *_ = get_ml_modules()
-    dfs_local = []
-    for i in range(int(num_races)):
-        df_local = run_simulated_race(ticks=int(ticks_per_race), track_info=track_info)
-        df_local["race_id"] = int(i)
-        dfs_local.append(df_local)
-        if show_progress and ((i + 1) % max(1, int(num_races // 10)) == 0):
-            st.sidebar.write(f"Generated {i+1}/{num_races} simulated races")
-    if not dfs_local:
-        return pd.DataFrame()
-    return pd.concat(dfs_local, ignore_index=True)
+def build_training_dataset(num_races: int = 40, show_progress: bool = False, track_info: Dict[str, Any] = None) -> pd.DataFrame:
+    """
+    Constructs a leak-free multi-race training dataset tagged with unique race_id
+    and matching live telemetry feature definitions.
+    """
+    base_lap = float(track_info.get("base_lap", 85.0)) if track_info else 85.0
+    return build_leak_free_race_dataset(num_races=int(num_races), base_lap=base_lap, random_state=42)
 
-def train_model_from_df(df_local, random_state: int = 42):
-    pd, np, RandomForestRegressor, Pipeline, OneHotEncoder, StandardScaler, ColumnTransformer, train_test_split, r2_score, mean_absolute_error, _ = get_ml_modules()
-    features = ["tyre", "start_aggression", "start_fuel", "start_tyre_wear", "start_brake_temp", "avg_speed", "avg_brake", "pit_count", "incidents"]
-    X = df_local[features].copy()
-    y = df_local["target_avg_lap"].copy()
-    cat_cols = ["tyre"]
-    num_cols = [c for c in features if c not in cat_cols]
 
-    ohe_kwargs = {"handle_unknown": "ignore"}
-    try:
-        OneHotEncoder(sparse_output=False)
-        ohe_kwargs["sparse_output"] = False
-    except TypeError:
-        ohe_kwargs["sparse"] = False
+def train_model_from_df(df_local: pd.DataFrame, random_state: int = 42):
+    """
+    Trains RandomForest with group-based race splitting and baseline evaluation.
+    """
+    pipeline, df_compare, metadata, (X_test, y_test) = train_f1_lap_predictor(
+        df=df_local,
+        random_state=random_state
+    )
+    metrics = {
+        "r2": metadata["metrics"]["test_r2"],
+        "mae": metadata["metrics"]["test_mae"],
+        "rmse": metadata["metrics"]["test_rmse"],
+        "baseline_mae": metadata["metrics"]["baseline_test_mae"],
+        "lift": metadata["metrics"]["lift_mae_seconds"]
+    }
+    y_pred = pipeline.predict(X_test)
+    return pipeline, metrics, (X_test, y_test.values, y_pred), metadata
 
-    pre = ColumnTransformer([
-        ("cat", OneHotEncoder(**ohe_kwargs), cat_cols),
-        ("num", StandardScaler(), num_cols)
-    ], remainder="drop")
-    rf = RandomForestRegressor(n_estimators=150, random_state=random_state, n_jobs=-1)
-    model_local = Pipeline([("pre", pre), ("rf", rf)])
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.18, random_state=random_state)
-    model_local.fit(X_train, y_train)
-    y_pred = model_local.predict(X_test)
-    metrics_local = {"r2": float(r2_score(y_test, y_pred)), "mae": float(mean_absolute_error(y_test, y_pred))}
-    return model_local, metrics_local, (X_test, y_test, y_pred)
 
-def prepare_features_from_state(state_arg: Dict[str, Dict[str, Any]]):
-    pd, *_ = get_ml_modules()
+def prepare_features_from_state(state_arg: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
+    """
+    Extracts live telemetry features ensuring 100% schema and semantic
+    consistency with model training features.
+    """
     rows_p = []
     for name, car in state_arg.items():
-        last = car.get("history", [])[-1] if car.get("history") else {}
+        speed = float(car.get("speed", 220.0))
+        throttle = float(car.get("throttle", 0.8) * 100.0)
+        brake = float(car.get("brake", 0.0) * 100.0)
+        tyre_wear = float(car.get("tyre_wear", 0.05) * 100.0)
+        fuel = float(car.get("fuel", 80.0))
+        brake_temp = float(car.get("brake_temp", BRAKE_MIN_TEMP))
+        aggression = float(car.get("aggression", 1.0))
+        pit_stops = int(car.get("pit_stops", 0))
+        incident_count = int(car.get("incident_count", 0))
+        tyre = car.get("tyre", "Medium")
+
         rows_p.append({
             "car": name,
-            "tyre": car.get("tyre", "Unknown"),
-            "start_aggression": float(car.get("aggression", 1.0)),
-            "start_fuel": float(car.get("fuel", 0.0)),
-            "start_tyre_wear": float(car.get("tyre_wear", 0.0)),
-            "start_brake_temp": float(car.get("brake_temp", BRAKE_MIN_TEMP)),
-            "avg_speed": float(last.get("speed", car.get("speed", 0.0))),
-            "avg_brake": float(last.get("brake_temp", car.get("brake_temp", BRAKE_MIN_TEMP))),
-            "pit_count": int(car.get("pit_request", False) or car.get("in_pit", False)),
-            "incidents": int(car.get("incident", False))
+            "tyre": tyre,
+            "speed": round(speed, 1),
+            "throttle": round(throttle, 1),
+            "brake": round(brake, 1),
+            "tyre_wear": round(tyre_wear, 1),
+            "fuel": round(fuel, 1),
+            "brake_temp": round(brake_temp, 1),
+            "aggression": round(aggression, 2),
+            "pit_stops": pit_stops,
+            "incident_count": incident_count
         })
-    return pd.DataFrame(rows_p)
+
+    df = pd.DataFrame(rows_p)
+    return validate_feature_schema(df, expected_features=ALL_FEATURES, require_target=False)
+
+
+def generate_race_commentary(state: Dict[str, Any], track_info: Dict[str, Any], safety_car: bool) -> List[str]:
+    """Generates lively, authentic F1 broadcast pitwall commentary in plain English."""
+    comments = []
+    if safety_car:
+        comments.append("🚨 **SAFETY CAR DEPLOYED!** The entire field is slowed down to 120 km/h. Gaps between cars are shrinking—this is the golden moment for a pit stop!")
+        return comments
+
+    sorted_cars = sorted(state.items(), key=lambda kv: kv[1]["position"])
+    if not sorted_cars:
+        return ["🏎️ Preparing race start..."]
+
+    leader_name, leader_car = sorted_cars[0]
+    p2_name, p2_car = sorted_cars[1] if len(sorted_cars) > 1 else (None, None)
+
+    all_fin = all(c.get("finished", False) for c in state.values())
+    if all_fin:
+        comments.append(f"🏆 **CHEQUERED FLAG!** {DRIVER_LABELS.get(leader_name, leader_name)} takes VICTORY at the {track_info['name']} Grand Prix! What an incredible drive!")
+        return comments
+
+    lap = leader_car.get("lap", 1)
+    tot_laps = track_info["total_laps"]
+    comments.append(f"🏎️ **Lap {lap}/{tot_laps}**: {DRIVER_LABELS.get(leader_name, leader_name)} is leading the Grand Prix, flying at **{leader_car['speed']:.0f} km/h**!")
+
+    if p2_car:
+        gap_m = leader_car.get("total_distance", 0.0) - p2_car.get("total_distance", 0.0)
+        gap_sec = gap_m / max(1.0, (p2_car.get("speed", 220.0) / 3.6))
+        if gap_sec < 1.0:
+            comments.append(f"⚔️ **WHEEL-TO-WHEEL BATTLE!** {DRIVER_LABELS.get(p2_name, p2_name)} is within 1 second (**+{gap_sec:.2f}s**) of the leader and hunting for P1!")
+        elif gap_sec < 3.5:
+            comments.append(f"⏱️ **Podium Fight**: {DRIVER_LABELS.get(p2_name, p2_name)} is trailing P1 by **+{gap_sec:.1f}s**.")
+
+    # Tyre degradation warnings
+    danger_tyres = [DRIVER_LABELS.get(n, n) for n, c in state.items() if c.get("tyre_wear", 0.0) > 0.60 and not c.get("in_pit") and not c.get("finished")]
+    if danger_tyres:
+        comments.append(f"⚠️ **TYRE WEAR ALERT**: {', '.join(danger_tyres[:2])} has worn tyres (>60% wear). Grip is dropping fast—time to call a pit stop!")
+
+    # Pit lane activity
+    in_pit = [DRIVER_LABELS.get(n, n) for n, c in state.items() if c.get("in_pit")]
+    if in_pit:
+        comments.append(f"🛑 **PIT STOP IN PROGRESS**: {', '.join(in_pit)} is in the pit lane right now getting fresh tyres!")
+
+    # DRS active
+    drs_cars = [DRIVER_LABELS.get(n, n) for n, c in state.items() if c.get("drs_active")]
+    if drs_cars:
+        comments.append(f"💨 **DRS WING OPEN**: {', '.join(drs_cars)} popped rear wing open for an extra top-speed boost!")
+
+    return comments
 
 
 # -----------------------------------------------------------------------------
@@ -674,6 +721,29 @@ if __name__ == "__main__":
     st.write("---")
 
     # -------------------------------------------------------------------------
+    # Experience Level Mode Selector
+    # -------------------------------------------------------------------------
+    c_mode1, c_mode2 = st.columns([2.3, 1.1])
+    with c_mode1:
+        exp_mode = st.radio(
+            "🎮 Choose Your Experience Mode:",
+            options=[
+                "🟢 Easy Spectator Mode (Watch the race, see the 2D map & call pit stops — beginner friendly)",
+                "🔬 Pro Telemetry & Data Science Studio (Detailed sensor graphs, PCA, Ensembles & Neural Networks)"
+            ],
+            index=0 if st.session_state.get("is_spectator", True) else 1,
+            horizontal=True,
+            key="radio_exp_mode"
+        )
+        is_spectator = "Easy" in exp_mode
+        st.session_state["is_spectator"] = is_spectator
+    with c_mode2:
+        if is_spectator:
+            st.success("🟢 **Spectator Mode Active**\n\nSit back, watch the 2D circuit map, and call pit stops!")
+        else:
+            st.info("🔬 **Pro Studio Active**\n\nFull sensor graphs, PCA, Ensembles & Neural Networks.")
+
+    # -------------------------------------------------------------------------
     # Aggression Randomization Popup / Notification
     # -------------------------------------------------------------------------
     if "aggr_popup_data" in st.session_state:
@@ -695,25 +765,22 @@ if __name__ == "__main__":
         del st.session_state["aggr_popup_data"]
 
     # -------------------------------------------------------------------------
-    # Controls
+    # Simplified Control Station (Beginner Friendly)
     # -------------------------------------------------------------------------
-    col1, col2, col3, col4, col5 = st.columns([1.1, 1.3, 1.2, 1.0, 1.2])
+    col1, col2, col3, col4, col5 = st.columns([1.5, 1.2, 1.3, 1.0, 1.2])
     with col1:
-        if st.button("Start Simulation", use_container_width=True):
-            st.session_state.running = True
-            st.session_state.last_update = time.time()
-            st.rerun()
-        if st.button("Stop Simulation", use_container_width=True):
-            st.session_state.running = False
-            st.rerun()
+        if not st.session_state.running:
+            if st.button("🟢 START GRAND PRIX!", type="primary", use_container_width=True, key="btn_start_race"):
+                st.session_state.running = True
+                st.session_state.last_update = time.time()
+                st.rerun()
+        else:
+            if st.button("⏸️ PAUSE RACE", type="secondary", use_container_width=True, key="btn_pause_race"):
+                st.session_state.running = False
+                st.rerun()
 
     with col2:
-        if st.button("🏁 Direct End Result", type="primary", use_container_width=True):
-            st.session_state.sim_state = fast_forward_race_to_finish(st.session_state.sim_state, current_track_info)
-            st.session_state.running = False
-            st.session_state.race_finished_banner = True
-            st.rerun()
-        if st.button("Reset Race", use_container_width=True):
+        if st.button("🔄 Restart Race", use_container_width=True, key="btn_reset_race"):
             st.session_state.sim_state = make_initial_state(current_track_info)
             st.session_state.running = False
             st.session_state.safety_car = False
@@ -724,66 +791,88 @@ if __name__ == "__main__":
             st.rerun()
 
     with col3:
-        if st.button("🎲 Randomize aggression", use_container_width=True):
-            applied_summary = {}
-            for cname, c in st.session_state.sim_state.items():
-                val = round(random.uniform(0.85, 1.25), 2)
-                c["aggression"] = val
-                st.session_state[f"aggr_{cname}"] = val
-                applied_summary[cname] = val
-            st.session_state["aggr_popup_data"] = applied_summary
-            st.rerun()
-
-    with col4:
-        sc = st.checkbox("Safety Car active", value=st.session_state.safety_car, key="safety_car_box")
-        st.session_state.safety_car = sc
-
-    with col5:
         speed_choice = st.select_slider(
             "⚡ Sim Speed",
             options=[1, 2, 5, 8, 15, 30],
             value=int(st.session_state.sim_speed),
-            format_func=lambda x: f"{x}x",
+            format_func=lambda x: f"{x}x ({'Slow' if x<=2 else ('Ideal' if x<=8 else 'Fast')})",
             key="sim_speed_slider"
         )
         st.session_state.sim_speed = speed_choice
+
+    with col4:
+        sc = st.toggle("🚨 Safety Car", value=st.session_state.safety_car, key="safety_car_box")
+        st.session_state.safety_car = sc
+
+    with col5:
+        if st.button("🏁 Skip to Finish", use_container_width=True, key="btn_fast_finish"):
+            st.session_state.sim_state = fast_forward_race_to_finish(st.session_state.sim_state, current_track_info)
+            st.session_state.running = False
+            st.session_state.race_finished_banner = True
+            st.rerun()
 
     st.write("---")
 
     # Sidebar controls
     with st.sidebar:
-        st.header("Simulation Settings")
-        st.session_state.refresh_ms = st.slider("Refresh (ms)", 200, 2000, int(st.session_state.refresh_ms), step=100)
-        st.write(f"Active Track: **{current_track_info['name']} ({current_track_info['country']})**")
-        st.write(f"Sim Speed Multiplier: **{st.session_state.sim_speed}x**")
+        st.header("🏁 Race Control Station")
+        st.write(f"Circuit: **{current_track_info['name']} ({current_track_info['country']})**")
+        st.write(f"Race Pace: **{st.session_state.sim_speed}x Real Time**")
+        st.write("Race Status:", "🟢 Running" if st.session_state.running else "🔴 Paused / Stopped")
+
         st.write("---")
-        st.subheader("Per-car controls")
-        selected = st.selectbox("Select car", CAR_NAMES)
+        st.subheader("📞 Pitwall Quick Radio")
+        st.caption("Call any driver in for new tyres to fix worn rubber!")
+        selected = st.selectbox("Choose Driver:", CAR_NAMES, format_func=lambda c: DRIVER_LABELS.get(c, c))
         pit_choice_key = f"pit_choice_{selected}"
-        pit_tyre_choice = st.selectbox("Pit tyre choice", TYRE_COMPOUNDS, index=0, key=pit_choice_key)
-        
-        if st.button("Request Pit (selected)"):
+        pit_tyre_choice = st.selectbox(
+            "Tyre Compound:",
+            options=["Soft", "Medium", "Hard", "Inter", "Wet"],
+            format_func=lambda t: f"{'🔴' if t=='Soft' else ('🟡' if t=='Medium' else ('⚪' if t=='Hard' else '🟢'))} {t} ({'Fastest' if t=='Soft' else ('Balanced' if t=='Medium' else 'Longest lasting')})",
+            index=0,
+            key=pit_choice_key
+        )
+
+        if st.button("📞 BOX, BOX, BOX! (Call Pit Stop)", type="primary", use_container_width=True, key="btn_side_pit"):
             st.session_state.sim_state[selected]["pit_request"] = True
             st.session_state.sim_state[selected]["pit_tyre_choice"] = pit_tyre_choice
-            st.success(f"Pit requested for {selected} ({pit_tyre_choice})")
+            st.toast(f"📞 Pit stop confirmed for {selected}! Entering pits for {pit_tyre_choice} tyres.", icon="🛑")
+            st.success(f"Pit queued for {selected} ({pit_tyre_choice})")
 
-        if st.button("Force DRS (selected)"):
-            car = st.session_state.sim_state[selected]
-            car["drs_active"] = True
-            car["drs_timer"] = DRS_DURATION_SEC
-            car["drs_cooldown"] = 0.0
-            car["drs_available"] = True
-            st.success(f"DRS forced for {selected}!")
+        if not is_spectator:
+            st.write("---")
+            st.subheader("🔬 Advanced Telemetry Controls")
+            st.session_state.refresh_ms = st.slider("Screen Refresh (ms)", 200, 2000, int(st.session_state.refresh_ms), step=100)
+            if st.button("Force DRS Wing Open (Selected)"):
+                car = st.session_state.sim_state[selected]
+                car["drs_active"] = True
+                car["drs_timer"] = DRS_DURATION_SEC
+                car["drs_cooldown"] = 0.0
+                car["drs_available"] = True
+                st.success(f"DRS forced for {selected}!")
 
-        aggr_key = f"aggr_{selected}"
-        current_aggr = float(st.session_state.sim_state[selected]["aggression"])
-        if aggr_key not in st.session_state:
-            st.session_state[aggr_key] = current_aggr
-        new_aggr = st.slider("Aggression (selected)", min_value=0.7, max_value=1.4, step=0.01, key=aggr_key)
-        st.session_state.sim_state[selected]["aggression"] = float(new_aggr)
+            aggr_key = f"aggr_{selected}"
+            current_aggr = float(st.session_state.sim_state[selected]["aggression"])
+            if aggr_key not in st.session_state:
+                st.session_state[aggr_key] = current_aggr
+            new_aggr = st.slider("Driver Aggression", min_value=0.7, max_value=1.4, step=0.01, key=aggr_key)
+            st.session_state.sim_state[selected]["aggression"] = float(new_aggr)
 
-        st.write("---")
-        st.write("Status:", "🟢 Running" if st.session_state.running else "🔴 Stopped")
+            def _cb_randomize_grid_aggression():
+                applied_summary = {}
+                for cname, c in st.session_state.sim_state.items():
+                    val = round(random.uniform(0.85, 1.25), 2)
+                    c["aggression"] = val
+                    st.session_state[f"aggr_{cname}"] = val
+                    applied_summary[cname] = val
+                st.session_state["aggr_popup_data"] = applied_summary
+
+            st.button(
+                "🎲 Randomize Grid Aggression",
+                use_container_width=True,
+                key="btn_randomize_grid_aggr",
+                on_click=_cb_randomize_grid_aggression,
+            )
 
     # -------------------------------------------------------------------------
     # Leaderboard & Metrics
@@ -931,14 +1020,130 @@ if __name__ == "__main__":
     df_brake = pd.DataFrame(brake_dict, index=ticks_index)
     df_brake.index.name = "⏱️ Time Sample"
 
-    tab_graphs, tab_tables, tab_dim_red, tab_ensemble = st.tabs([
+    tab_spectator, tab_graphs, tab_tables, tab_dim_red, tab_ensemble, tab_neural_net, tab_beginner = st.tabs([
+        "🏎️ Live Race Broadcast (Easy Mode)",
         "📈 Graphical Charts View",
         "📋 Telemetry Data Tables View",
         "📉 Dimensionality Reduction (PCA & t-SNE)",
-        "🌳 Ensemble Methods & Diagnostics"
+        "🌳 Ensemble Methods & Diagnostics",
+        "🧠 Neural Network Lab & Deployment",
+        "📖 F1 Beginner's Rules & Strategy Guide"
     ])
 
+    # =========================================================================
+    # TAB 1: LIVE SPECTATOR BROADCAST (NON-TECH FRIENDLY EASY MODE)
+    # =========================================================================
+    with tab_spectator:
+        st.caption("🏎️ *Live Grand Prix broadcast view designed for everyone. Sit back, watch the cars circle the circuit, follow the live commentary, and make pit stop calls!*")
+
+        # Top 3-step beginner guide callout
+        st.success("""
+        👋 **Welcome to the Grand Prix Pit Wall! Here is how to play in 3 easy steps:**
+        1. Click **🟢 START GRAND PRIX!** at the top to release the cars onto the circuit.
+        2. Watch the **Live 2D Track Map** below to see cars cornering and overtaking in real time!
+        3. Check tyre wear in the table below: when rubber turns **🔴 Red (>60% wear)**, use the **Pitstop Radio** to call the driver in for fresh tyres!
+        """)
+
+        # 2-Column: Live 2D Track Map & Live Commentary + Pitstop Radio
+        col_spec_map, col_spec_pitwall = st.columns([1.4, 1.0])
+
+        with col_spec_map:
+            st.markdown("#### 🗺️ Live 2D Grand Prix Circuit Track Map")
+            st.caption(f"Real-time car positions on **{current_track_info['name']} ({current_track_info['country']})**. Colored dots match official team liveries.")
+            try:
+                import f1_circuit_maps
+                df_map_cars = f1_circuit_maps.get_live_car_coordinates(
+                    track_name=current_track_info["name"],
+                    state=state,
+                    track_length_m=current_track_info["length_m"]
+                )
+                track_chart = f1_circuit_maps.render_circuit_map_altair(
+                    track_name=current_track_info["name"],
+                    df_cars=df_map_cars
+                )
+                st.altair_chart(track_chart, use_container_width=True)
+            except Exception as e:
+                st.info("Live circuit map rendering...")
+
+        with col_spec_pitwall:
+            st.markdown("#### 🎙️ Live Pitwall Radio & Commentary")
+            commentary_lines = generate_race_commentary(state, current_track_info, st.session_state.safety_car)
+            for comment in commentary_lines:
+                st.info(comment)
+
+            st.write("---")
+            st.markdown("#### 📞 1-Click Pitstop Command Radio")
+            st.caption("Take the pitwall headset and order a tyre change for your driver!")
+
+            c_spec_p1, c_spec_p2 = st.columns(2)
+            with c_spec_p1:
+                spec_driver_choice = st.selectbox(
+                    "Driver to Box:",
+                    CAR_NAMES,
+                    format_func=lambda c: DRIVER_LABELS.get(c, c),
+                    key="spec_driver_select"
+                )
+            with c_spec_p2:
+                spec_tyre_choice = st.selectbox(
+                    "New Tyre Compound:",
+                    options=["Soft", "Medium", "Hard"],
+                    format_func=lambda t: f"{'🔴' if t=='Soft' else ('🟡' if t=='Medium' else '⚪')} {t} ({'Fast' if t=='Soft' else ('Balanced' if t=='Medium' else 'Durable')})",
+                    key="spec_tyre_select"
+                )
+
+            if st.button("📞 BOX, BOX, BOX! (Call Driver to Pits)", type="primary", use_container_width=True, key="btn_spec_box_now"):
+                st.session_state.sim_state[spec_driver_choice]["pit_request"] = True
+                st.session_state.sim_state[spec_driver_choice]["pit_tyre_choice"] = spec_tyre_choice
+                st.toast(f"🛑 Pit confirmed! {spec_driver_choice} will enter the pit lane on the next lap for {spec_tyre_choice} tyres.", icon="🏎️")
+                st.success(f"Pit stop scheduled for {DRIVER_LABELS.get(spec_driver_choice, spec_driver_choice)}!")
+
+        st.write("---")
+        st.subheader("📺 TV Broadcast Tower: Live Race Leaderboard")
+        st.caption("Simplified standings with driver positions, speeds, and easy-to-read colour-coded tyre health.")
+
+        # Friendly TV Tower display
+        spec_rows = []
+        leader_dist = max(c.get("total_distance", 0.0) for c in state.values()) if state else 0.0
+        for name, car in sorted(state.items(), key=lambda kv: kv[1]["position"]):
+            gap_m = leader_dist - car.get("total_distance", 0.0)
+            gap_str = "LEADER 🥇" if car["position"] == 1 else f"+{gap_m / max(1.0, (car['speed']/3.6)):.1f}s"
+            wear_pct = round(car["tyre_wear"] * 100, 1)
+            wear_badge = "🟢 Fresh (High Grip)" if wear_pct < 35 else ("🟡 Used (Normal)" if wear_pct < 65 else "🔴 Critical (BOX NOW!)")
+
+            spec_rows.append({
+                "Position": f"P{car['position']}",
+                "Driver": DRIVER_LABELS.get(name, name),
+                "Speed": f"{car['speed']:.0f} km/h",
+                "Tyre": f"{car['tyre']}",
+                "Grip Status": wear_badge,
+                "Tyre Wear (%)": wear_pct,
+                "Gap to P1": gap_str,
+                "DRS Wing": "🟢 Open (+Speed)" if car.get("drs_active") else "⚪ Closed",
+                "Status": "🛑 IN PIT" if car.get("in_pit") else ("🏁 FINISHED" if car.get("finished") else "🏎️ RACING")
+            })
+
+        st.dataframe(
+            spec_rows,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Position": st.column_config.TextColumn("🏆 Pos"),
+                "Driver": st.column_config.TextColumn("🏎️ Driver & Team"),
+                "Speed": st.column_config.TextColumn("⚡ Speed"),
+                "Tyre": st.column_config.TextColumn("🛞 Compound"),
+                "Grip Status": st.column_config.TextColumn("🛡️ Tyre Condition"),
+                "Tyre Wear (%)": st.column_config.ProgressColumn("📉 Tyre Wear %", min_value=0, max_value=100, format="%.1f%%"),
+                "Gap to P1": st.column_config.TextColumn("⏱️ Gap to Leader"),
+                "DRS Wing": st.column_config.TextColumn("💨 DRS Status"),
+                "Status": st.column_config.TextColumn("🚦 Status")
+            }
+        )
+
+    # =========================================================================
+    # TAB 2: DETAILED GRAPHICAL TELEMETRY
+    # =========================================================================
     with tab_graphs:
+        st.info("💡 **In Plain English**: These graphs trace how fast cars accelerate on straights, how hard they brake into corners (heating carbon brakes up to 800°C), and how lap times change as tyres wear down.")
         st.caption("💡 *Live circuit tracking and real-time telemetry analytics. Hover over any car marker or chart for exact figures.*")
 
         # --- 2D Real-Time Circuit Map & Live Battle Visualizer ---
@@ -979,6 +1184,7 @@ if __name__ == "__main__":
             st.dataframe(wear_table, use_container_width=True, hide_index=True)
 
     with tab_tables:
+        st.info("💡 **In Plain English**: This is the complete race engineering sheet. It gives you the exact numbers for car speeds, lap times, sector splits, brake disc temperatures, and tyre wear percentages.")
         st.caption("📋 *Clear, self-explanatory tabular breakdowns of all car dynamics.*")
         t_col1, t_col2 = st.columns(2)
         with t_col1:
@@ -1066,6 +1272,7 @@ if __name__ == "__main__":
         )
 
     with tab_dim_red:
+        st.info("💡 **In Plain English**: A modern F1 car has dozens of sensors measuring speed, throttle, brakes, fuel, and tyre wear every millisecond. Looking at 10+ numbers at the same time is overwhelming. PCA and t-SNE squash all 10 confusing numbers down into a simple 2D map so race engineers can spot tyre trends and driver styles at a single glance!")
         st.caption("🧭 *High-Dimensional Telemetry Compression & Manifold Learning: Uncovering driver habits, tyre regimes, and vehicle dynamics using PCA and t-SNE.*")
 
         if not check_ml_available():
@@ -1296,6 +1503,7 @@ if __name__ == "__main__":
                 )
 
     with tab_ensemble:
+        st.info("💡 **In Plain English**: Instead of asking just one computer model for lap-time predictions, Ensemble Learning asks a council of 100 decision trees to vote together! This combines the wisdom of multiple models (like Random Forest and XGBoost) to give much more reliable race predictions.")
         st.caption("🏎️ *Ensemble Learning & Telemetry Diagnostics: Bagging (Random Forest), Boosting (XGBoost & LightGBM), Bias–Variance Decomposition, and Regularization (L1/L2).*")
         
         if not check_ml_available():
@@ -1647,6 +1855,67 @@ if __name__ == "__main__":
                         mime="text/csv",
                         help="Download the multi-channel F1 telemetry dataset used for ensemble benchmarking"
                     )
+
+    with tab_neural_net:
+        if not check_ml_available():
+            st.warning("Neural network analytics require `pandas`, `numpy`, and `joblib`. Please ensure they are installed in your Python environment.")
+        else:
+            import f1_neural_network_lab
+            import importlib
+            importlib.reload(f1_neural_network_lab)
+            f1_neural_network_lab.render_neural_network_lab(
+                state=state,
+                current_track_info=current_track_info,
+                driver_labels=DRIVER_LABELS
+            )
+
+    # TAB 7: F1 BEGINNER'S RULES & STRATEGY GUIDE (NON-TECH FRIENDLY)
+    # =========================================================================
+    with tab_beginner:
+        st.subheader("📖 Formula 1 Beginner's Rules, Physics & Pit Strategy Guide")
+        st.markdown("Everything you need to understand Grand Prix racing, pit strategy, tyres, and physics in simple, everyday language!")
+
+        b_c1, b_c2 = st.columns(2)
+        with b_c1:
+            st.markdown("""
+            ### 🛞 1. The 5 Tyre Compounds (Why Rubber Matters)
+            Formula 1 cars do not just have one tyre. Pirelli supplies 5 distinct tyre compounds:
+            * 🔴 **Soft Tyres (Red)**: Very soft, sticky rubber. Gives **maximum grip** and the fastest lap times, but burns away quickly (lasts ~10–15 laps).
+            * 🟡 **Medium Tyres (Yellow)**: The balanced tyre. Fast and durable (lasts ~20–25 laps). Most drivers start the race on Mediums.
+            * ⚪ **Hard Tyres (White)**: Tough, dense rubber. Slower to heat up, but extremely durable (can last 35+ laps).
+            * 🟢 **Intermediates (Green)**: Used in light rain or on a damp, drying track to channel water away.
+            * 🔵 **Full Wet (Blue)**: Heavy monsoon rain tyre that pumps **85 litres of water per second** to prevent hydroplaning!
+
+            ---
+
+            ### 📉 2. What is the 'Tyre Cliff'?
+            When an F1 car corners at 250+ km/h, friction strips away microscopic layers of rubber:
+            * **0% – 35% Wear**: 🟢 *Fresh Grip* — car handles crisply and corners at top speed.
+            * **35% – 60% Wear**: 🟡 *Used Grip* — lap times drop by ~0.5 to 1.0 second as tyre slips slightly.
+            * **> 60% Wear**: 🔴 *The Tyre Cliff* — grip falls off a cliff! The car starts sliding violently, brakes lock up, and lap times drop by 2–4 seconds. **This is when the team radio yells: 'BOX, BOX, BOX!'**
+            """)
+
+        with b_c2:
+            st.markdown("""
+            ### 💨 3. What is DRS (Drag Reduction System)?
+            Formula 1 cars produce huge wings that push the car down onto the road, but also create massive air resistance (drag):
+            * On designated straights, if a car is within **1.0 second** of the car ahead, the driver can press a button.
+            * A hydraulic flap pops open the **rear wing**.
+            * This dumps aerodynamic drag and grants an instant **+10 to +15 km/h speed boost** to pass the car ahead!
+
+            ---
+
+            ### ⛽ 4. Why Does Fuel Burn Make Cars Faster?
+            * At the race start, cars are loaded with ~110 kg of petrol.
+            * Carrying that extra weight makes the car sluggish into corners (costing ~0.3 seconds per 10 kg).
+            * As fuel burns lap after lap, the car gets lighter and nimbler, which is why **the fastest laps of the race often happen on the very last laps!**
+
+            ---
+
+            ### 🛑 5. Pit Stop Tactics: The 'Undercut'
+            * **The Undercut**: If you are stuck behind a rival and can't pass them on track, you pit **one lap earlier** for fresh Soft tyres.
+            * Your fresh tyres give you so much grip on your out-lap that when your rival pits on the next lap, **you fly past them as they exit the pit lane!**
+            """)
 
     st.markdown("---")
 
